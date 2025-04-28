@@ -281,6 +281,12 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         print("Message received: \(message.name)")
+        if configuredJavaScriptChannels.contains(message.name) {
+            if let body = message.body as? String {
+                // Call the method if the channel is in the configured list
+                delegate?.onJavascriptChannelMessageReceived(channelName: message.name, message: body)
+            }
+        }   
         if let body = message.body as? String {
             delegate?.sendMessageBody(body: body)
         }
