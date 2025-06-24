@@ -1,4 +1,4 @@
-package com.custom.webview_plugin
+ ipackage com.custom.webview_plugin
 
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -300,6 +300,14 @@ class WebViewManager private constructor(
                             val downloadIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
                             context.startActivity(downloadIntent)
                             return true // Download handled, do not load in WebView
+                        }else if (url.startsWith("tel:")) {
+                            val intent = Intent(Intent.ACTION_DIAL, Uri.parse(url))
+                            view.context.startActivity(intent)
+                            return true // Prevent WebView from loading the tel: link
+                        } else if (url.startsWith("mailto:")) {
+                            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse(url))
+                            view.context.startActivity(intent)
+                            return true // Prevent WebView from loading the mailto: link
                         }
                         return false
                     }
