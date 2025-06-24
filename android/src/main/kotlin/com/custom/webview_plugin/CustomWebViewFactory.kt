@@ -1,4 +1,4 @@
- package com.custom.webview_plugin
+package com.custom.webview_plugin
 
 import android.annotation.SuppressLint
 import android.app.Activity
