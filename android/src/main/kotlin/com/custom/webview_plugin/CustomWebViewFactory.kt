@@ -302,11 +302,11 @@ class WebViewManager private constructor(
                             return true // Download handled, do not load in WebView
                         }else if (url.startsWith("tel:")) {
                             val intent = Intent(Intent.ACTION_DIAL, Uri.parse(url))
-                            view.context.startActivity(intent)
+                            context.startActivity(intent)
                             return true // Prevent WebView from loading the tel: link
                         } else if (url.startsWith("mailto:")) {
                             val intent = Intent(Intent.ACTION_SENDTO, Uri.parse(url))
-                            view.context.startActivity(intent)
+                            context.startActivity(intent)
                             return true // Prevent WebView from loading the mailto: link
                         }
                         return false
