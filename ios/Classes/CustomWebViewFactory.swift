@@ -82,15 +82,29 @@ extension WebViewMoFlutter: WKNavigationDelegate {
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if let url = navigationAction.request.url {
-            // Check if the URL is a file link
-            if url.absoluteString.contains(".pdf") || url.absoluteString.contains("SH=") || url.isFileURL {
-                // Open the URL in an external browser
-                UIApplication.shared.open(url, options: [:], completionHandler: nil)
-                decisionHandler(.cancel) // Cancel the navigation in WebView
-                return
-            }
+      // Check if the URL is a file link
+      if url.absoluteString.contains(".pdf") || url.absoluteString.contains("SH=") || url.isFileURL {
+        // Open the URL in an external browser
+        UIApplication.shared.open(url, options: [:], completionHandler: nil)
+        decisionHandler(.cancel) // Cancel the navigation in WebView
+        return
+      } else if (url.absoluteString.contains("tel:")) {
+        print("called tel====== \(url.absoluteString)")
+        if UIApplication.shared.canOpenURL(url) {
+          UIApplication.shared.open(url, options: [:], completionHandler: nil)
+          decisionHandler(.cancel)
+          return
         }
-        decisionHandler(.allow) // Allow navigation for other URLs
+      } else if (url.absoluteString.contains("mailto:")) {
+        print("called mailto====== \(url.absoluteString)")
+        if UIApplication.shared.canOpenURL(url) {
+          UIApplication.shared.open(url, options: [:], completionHandler: nil)
+          decisionHandler(.cancel)
+          return
+        }
+      }
+    }
+      decisionHandler(.allow) // Allow navigation for other URLs
     }
 
      func webView(_ webView: WKWebView, didReceive challenge: URLAuthenticationChallenge, completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void) {
