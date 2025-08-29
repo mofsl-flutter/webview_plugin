@@ -76,6 +76,14 @@ public class CustomWebViewPlugin: NSObject, FlutterPlugin, WKScriptMessageHandle
             }
         case "getCurrentUrl":
             result(WebViewManager.shared.webView?.url?.absoluteString)
+        case "setUserInteractionEnabled":
+            if let args = call.arguments as? [String: Any],
+               let enabled = args["enabled"] as? Bool {
+                WebViewManager.shared.setUserInteractionEnabled(enabled)
+                result(nil)
+            } else {
+                result(FlutterError(code: "INVALID_ARGUMENT", message: "enabled parameter is required", details: nil))
+            }
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -205,11 +213,11 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         webView?.frame = frame
         return webView!
     }
-    
+
     private func configureZoom(enabled: Bool) {
         webView?.scrollView.isScrollEnabled = true
         webView?.scrollView.pinchGestureRecognizer?.isEnabled = enabled
-        
+
         if !enabled {
             let zoomDisableScript = getZoomDisableScript()
             webView?.configuration.userContentController.addUserScript(zoomDisableScript)
@@ -250,6 +258,12 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         return true
     }
 
+     func setUserInteractionEnabled(_ enabled: Bool) {
+            DispatchQueue.main.async {
+                self.webView.isUserInteractionEnabled = enabled
+            }
+     }
+
     func isValidURL(_ url: URL) -> Bool {
         return UIApplication.shared.canOpenURL(url)
     }
@@ -286,7 +300,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
                 // Call the method if the channel is in the configured list
                 delegate?.onJavascriptChannelMessageReceived(channelName: message.name, message: body)
             }
-        }   
+        }
         if let body = message.body as? String {
             delegate?.sendMessageBody(body: body)
         }
@@ -319,7 +333,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
             return newWebView
         }
-        
+
         return webView
     }
 }

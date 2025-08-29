@@ -121,4 +121,13 @@ class CustomWebViewPlugin {
       callback(event);
     });
   }
+
+  static Future<void> setUserInteractionEnabled(bool enabled) async {
+    try {
+      await _channel.invokeMethod('setUserInteractionEnabled', {'enabled': enabled});
+      print("Called setUserInteractionEnabled: $enabled");
+    } on PlatformException catch (e) {
+      print("Failed to set user interaction: '${e.message}'.");
+    }
+  }
 }
