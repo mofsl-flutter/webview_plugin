@@ -60,6 +60,14 @@ public class CustomWebViewPlugin: NSObject, FlutterPlugin, WKScriptMessageHandle
             }
         case "getCurrentUrl":
             result(WebViewManager.shared.webView?.url?.absoluteString)
+        case "setUserInteractionEnabled":
+            if let args = call.arguments as? [String: Any],
+               let enabled = args["enabled"] as? Bool {
+                WebViewManager.shared.setUserInteractionEnabled(enabled)
+                result(nil)
+            } else {
+                result(FlutterError(code: "INVALID_ARGUMENT", message: "enabled parameter is required", details: nil))
+            }
         default:
             result(FlutterMethodNotImplemented)
         }
@@ -199,6 +207,12 @@ class WebViewManager: NSObject, WKNavigationDelegate, WKScriptMessageHandler {
         webView.configuration.userContentController.add(self, name: name)
         configuredJavaScriptChannels.insert(name)
         return true
+    }
+
+    func setUserInteractionEnabled(_ enabled: Bool) {
+        DispatchQueue.main.async {
+            self.webView.isUserInteractionEnabled = enabled
+        }
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
