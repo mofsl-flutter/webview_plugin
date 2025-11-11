@@ -162,7 +162,6 @@ class WebViewManager private constructor(
                     }
 
                     override fun onPermissionRequest(request: PermissionRequest?) {
-                        super.onPermissionRequest(request)
                         request?.grant(request.resources)
                     }
 
@@ -234,7 +233,6 @@ class WebViewManager private constructor(
                             }
 
                             override fun onPermissionRequest(request: PermissionRequest?) {
-                                super.onPermissionRequest(request)
                                 request?.grant(request.resources)
                             }
 
