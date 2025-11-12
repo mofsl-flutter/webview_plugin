@@ -1,6 +1,6 @@
 
 Pod::Spec.new do |s|
-    s.name             = 'ios_webview_plugin'
+    s.name             = 'custom_webview_plugin'
     s.version          = '0.0.1'
     s.summary          = 'A new flutter plugin project.'
     s.description      = <<-DESC

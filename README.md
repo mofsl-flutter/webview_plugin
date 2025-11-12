@@ -1,4 +1,4 @@
-# ios_webview_plugin
+# webview_plugin
 
 A new Flutter plugin project.
 

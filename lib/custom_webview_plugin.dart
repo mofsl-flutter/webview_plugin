@@ -1,0 +1,133 @@
+import 'package:flutter/services.dart';
+
+class CustomWebViewPlugin {
+  static const MethodChannel _channel = MethodChannel('custom_webview_flutter');
+  static const EventChannel _eventChannel = EventChannel('custom_webview_plugin_events');
+
+  // Method to open the WebView in iOS
+
+  // Stream<String>? _onPageLoadedStream;
+
+  static Stream<String>? _onMessageReceivedStream;
+
+  Stream<String> get onMessageReceived => _onMessageReceivedStream!;
+
+  static Future<void> openWebView(String url,
+      {String? javascriptChannelName,
+      bool? isChart,
+      bool? isZoomEnabled,
+      bool? enableMultipleWindows}) async {
+    try {
+      await _channel.invokeMethod('loadUrl', {
+        'initialUrl': url,
+        'javaScriptChannelName': javascriptChannelName,
+        'isChart': isChart,
+        'zoomEnabled': isZoomEnabled,
+        'enableMultipleWindows': enableMultipleWindows,
+      });
+    } on PlatformException catch (e) {
+      print("Failed to open WebView: '${e.message}'.");
+    }
+  }
+
+  static Future<void> loadHtmlData(
+    String htmlString, {
+    String? baseURL,
+    String? javaScriptChannelName,
+  }) async {
+    try {
+      await _channel.invokeMethod('loadHtmlData', {
+        'htmlString': htmlString,
+        'baseURL': baseURL,
+        "javaScriptChannelName": javaScriptChannelName,
+      });
+    } catch (e) {
+      print("Failed to load HTML data: $e");
+    }
+  }
+
+  static Future<void> addJavascriptChannel(String channelName) async {
+    try {
+      print("addJavascriptChannel  $channelName");
+      await _channel.invokeMethod('addJavascriptChannel', {'channelName': channelName});
+    } on PlatformException catch (e) {
+      print("Failed to add JavaScript channel: ${e.message}");
+      rethrow;
+    }
+  }
+
+  /// Reloads the current URL.
+  static Future<void> reloadUrl() async {
+    try {
+      await _channel.invokeMethod('reloadUrl');
+    } on PlatformException catch (e) {
+      print("Failed to reload URL: ${e.message}");
+      rethrow;
+    }
+  }
+
+  /// Resets the web view's cache.
+  static Future<void> resetCache() async {
+    try {
+      await _channel.invokeMethod('resetCache');
+    } on PlatformException catch (e) {
+      print("Failed to reset cache: ${e.message}");
+      rethrow;
+    }
+  }
+
+  // Method to authenticate the webviewSession in iOS
+
+  static Future<void> runJavaScript(String script) async {
+    try {
+      await _channel.invokeMethod('runJavaScript', {'script': script});
+    } on PlatformException catch (e) {
+      print("Failed to run JavaScript: '${e.message}'.");
+    }
+  }
+
+  static Future<void> enableMultipleWindows() async {
+    try {
+      await _channel.invokeMethod('enableMultipleWindows');
+    } on PlatformException catch (e) {
+      print("Failed to renableMultipleWindows: '${e.message}'.");
+    }
+  }
+
+  // Stream<String> get onPageLoaded {
+  //   _onPageLoadedStream ??=
+  //       _eventChannel.receiveBroadcastStream().map<String>((event) => event as String);
+  //   return _onPageLoadedStream!;
+  // }
+
+  static Future<String> getCurrentLoadedUrl() async {
+    try {
+      return await _channel.invokeMethod('getCurrentUrl');
+    } on PlatformException catch (e) {
+      print("Failed to get current URL: '${e.message}'.");
+      rethrow;
+    }
+  }
+
+  static void getJavaScriptChannelStream(Function(dynamic) callback) {
+    _eventChannel.receiveBroadcastStream().listen((event) {
+      callback(event);
+    });
+  }
+
+  static void setWebViewLoadedCallback(Function(dynamic) callback) {
+    _eventChannel.receiveBroadcastStream().listen((event) {
+      print(event);
+      callback(event);
+    });
+  }
+
+  static Future<void> setUserInteractionEnabled(bool enabled) async {
+    try {
+      await _channel.invokeMethod('setUserInteractionEnabled', {'enabled': enabled});
+      print("Called setUserInteractionEnabled: $enabled");
+    } on PlatformException catch (e) {
+      print("Failed to set user interaction: '${e.message}'.");
+    }
+  }
+}

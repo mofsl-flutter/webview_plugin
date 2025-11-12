@@ -1,4 +1,4 @@
-name: ios_webview_plugin
+name: custom_webview_plugin
 description: "A new Flutter plugin project."
 version: 0.0.1
 homepage:
@@ -39,8 +39,11 @@ flutter:
     # then add platforms following the instruction here:
     # https://flutter.dev/docs/development/packages-and-plugins/developing-packages#plugin-platforms
     # -------------------
-      ios: 
-        pluginClass: WebViewMoFlutterPlugin
+      android:
+        package: com.custom.webview_plugin
+        pluginClass: CustomWebViewPlugin
+      ios:
+        pluginClass: CustomWebViewPlugin
       
     # -------------------
 
