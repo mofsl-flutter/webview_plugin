@@ -15,7 +15,7 @@ import org.mockito.Mockito
 
 internal class IosWebviewPluginTest {
   @Test
-  fun onMethodCall_getPlatformVersion_returnsExpectedValue() {
+  fun onMethodCallGetPlatformVersionReturnsExpectedValue() {
     val plugin = IosWebviewPlugin()
 
     val call = MethodCall("getPlatformVersion", null)

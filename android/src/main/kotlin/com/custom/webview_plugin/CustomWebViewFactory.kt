@@ -10,7 +10,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Environment
 import android.os.Message
-import android.provider.OpenableColumns
 import android.util.Base64
 import android.util.Log
 import android.view.ViewGroup
@@ -60,10 +59,7 @@ class WebViewMoFlutter(
     private val webView: WebView = webViewManager.getOrCreateWebView()
 
     init {
-//        if (args is Map<*, *>) {
-//            val initialUrl = args["initialUrl"] as? String
-//            initialUrl?.let { webViewManager.loadURL(it, null, null) }
-//        }
+        // Initialization handled by WebViewManager
     }
 
     override fun getView(): WebView = webView
@@ -118,13 +114,6 @@ class WebViewManager private constructor(
         fileChooserLauncher?.launch(chooserIntent)
     }
 
-    private fun getFileSize(fileUri: Uri): Long {
-        val returnCursor = context.contentResolver.query(fileUri, null, null, null, null)
-        returnCursor!!.moveToFirst()
-        val sizeIndex = returnCursor!!.getColumnIndex(OpenableColumns.SIZE)
-        return returnCursor!!.getLong(sizeIndex)
-    }
-
     fun setFilePathCallback(callback: ValueCallback<Array<Uri>>) {
         mUploadMessage = callback
     }
@@ -132,7 +121,6 @@ class WebViewManager private constructor(
 
     @SuppressLint("SetJavaScriptEnabled")
     fun getOrCreateWebView(): WebView {
-
         if (webView == null) {
             configuredJavaScriptChannels.clear()
             webView = WebView(activity ?: context).apply {
@@ -140,213 +128,213 @@ class WebViewManager private constructor(
                 settings.domStorageEnabled = true
                 settings.cacheMode = WebSettings.LOAD_DEFAULT
                 settings.javaScriptCanOpenWindowsAutomatically = true
-//                settings.setSupportMultipleWindows(true)
-
-                webChromeClient = object : WebChromeClient() {
-                    override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
-                        Log.d(
-                            "CustomWebViewPlugin",
-                            "WebViewConsole: ${consoleMessage.message()} at ${consoleMessage.sourceId()}:${consoleMessage.lineNumber()}"
-                        )
-                        return true
-                    }
-
-                    override fun onJsAlert(
-                        view: WebView?,
-                        url: String?,
-                        message: String?,
-                        result: JsResult?
-                    ): Boolean {
-                        delegate?.onJsAlert(url, message)
-                        return true
-                    }
-
-                    override fun onPermissionRequest(request: PermissionRequest?) {
-                        request?.grant(request.resources)
-                    }
-
-                    override fun onShowFileChooser(
-                        webView: WebView?,
-                        filePathCallback: ValueCallback<Array<Uri>>,
-                        fileChooserParams: WebChromeClient.FileChooserParams
-                    ): Boolean {
-                        Log.d("CustomWebViewPlugin", "onShowFileChooser === ${fileChooserParams.mode}")
-                        val acceptTypes = arrayOf(
-                            "application/pdf",  // PDF files
-                            "image/*",           // Image files (e.g., JPG, PNG)
-                            "video/*",           // Video files (e.g., MP4, MOV)
-                            "*/*"                // All file types (fallback for any other file types)
-                        )
-                        val mimeTypes = fileChooserParams.acceptTypes?.joinToString(",") ?: ""
-                        if (acceptTypes.contains(mimeTypes) && !mimeTypes.contains("text/vcard")) {
-                            setFilePathCallback(filePathCallback)
-                            openFileChooser()
-                        }
-
-                        return true
-                    }
-
-
-                    override fun onCreateWindow(
-                        view: WebView?,
-                        isDialog: Boolean,
-                        isUserGesture: Boolean,
-                        resultMsg: Message?
-                    ): Boolean {
-                        val popupWebView = WebView(activity ?: context).apply {
-                            settings.javaScriptEnabled = true
-                            settings.javaScriptCanOpenWindowsAutomatically = true
-                            settings.setSupportMultipleWindows(true)
-                        }
-                        popupWebView.webViewClient = object : WebViewClient() {
-                            override fun shouldOverrideUrlLoading(
-                                view: WebView?,
-                                request: WebResourceRequest?
-                            ): Boolean {
-                                Log.d("WebPageActivity", "Popup WebView URL: ${request?.url}")
-                                val url = request?.url.toString()
-                                if (url.endsWith(".pdf") || url.contains("download")) {
-                                    // Handle file download directly
-                                    val downloadIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                                    context.startActivity(downloadIntent)
-                                    return true // Download handled, do not load in WebView
-                                }
-                                return false
-                            }
-
-                        }
-
-                        popupWebView.webChromeClient = object : WebChromeClient() {
-                            override fun onCloseWindow(window: WebView) {
-                                Log.d("WebPageActivity", "Popup WebView closed")
-                                popupWebView.destroy()
-                            }
-
-                            override fun onJsAlert(
-                                view: WebView?,
-                                url: String?,
-                                message: String?,
-                                result: JsResult?
-                            ): Boolean {
-                                delegate?.onJsAlert(url, message)
-                                return true
-                            }
-
-                            override fun onPermissionRequest(request: PermissionRequest?) {
-                                request?.grant(request.resources)
-                            }
-
-                            override fun onShowFileChooser(
-                                webView: WebView?,
-                                filePathCallback: ValueCallback<Array<Uri>>,
-                                fileChooserParams: WebChromeClient.FileChooserParams
-                            ): Boolean {
-                                Log.d(
-                                    "CustomWebViewPlugin",
-                                    "onShowFileChooser === ${fileChooserParams.mode}"
-                                )
-                                val acceptTypes = arrayOf(
-                                    "application/pdf",  // PDF files
-                                    "image/*",           // Image files (e.g., JPG, PNG)
-                                    "video/*",           // Video files (e.g., MP4, MOV)
-                                    "*/*"                // All file types (fallback for any other file types)
-                                )
-                                val mimeTypes = fileChooserParams.acceptTypes?.joinToString(",") ?: ""
-                                if (acceptTypes.contains(mimeTypes) && !mimeTypes.contains("text/vcard")) {
-                                    setFilePathCallback(filePathCallback)
-                                    openFileChooser()
-                                }
-
-                                return true
-                            }
-                        }
-
-                        // Display the popup WebView in a dialog
-                        val dialog = AlertDialog.Builder(activity ?: context).apply {
-                            setView(popupWebView)
-                            setOnDismissListener { popupWebView.destroy() }
-                        }.setPositiveButton("Close") { dialogInterface, i ->
-                            (popupWebView.parent as ViewGroup).removeView(popupWebView)
-                            dialogInterface.dismiss()
-                        }.create()
-                        // Set the soft input mode to adjust when the dialog is displayed
-                        dialog.window?.apply {
-                            setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
-                        }
-
-                        dialog.show()
-
-                        val transport = resultMsg!!.obj as WebView.WebViewTransport
-                        transport.webView = popupWebView
-                        resultMsg.sendToTarget()
-                        return true
-                    }
-                }
-                webViewClient = object : WebViewClient() {
-                    override fun onPageFinished(view: WebView?, url: String?) {
-                        super.onPageFinished(view, url)
-                        delegate?.onPageFinished(url ?: "")
-                    }
-
-                    override fun shouldOverrideUrlLoading(
-                        view: WebView?,
-                        request: WebResourceRequest?
-                    ): Boolean {
-                        Log.d("CustomWebViewPlugin", "shouldOverrideUrlLoading === ${view?.url}")
-                        val url = request?.url.toString()
-                        if (url.endsWith(".pdf") || url.contains("download") || url.contains("SH=")) {
-                            // Handle file download directly
-                            val downloadIntent = Intent(Intent.ACTION_VIEW, Uri.parse(url))
-                            context.startActivity(downloadIntent)
-                            return true // Download handled, do not load in WebView
-                        }else if (url.startsWith("tel:")) {
-                            val intent = Intent(Intent.ACTION_DIAL, Uri.parse(url))
-                            context.startActivity(intent)
-                            return true // Prevent WebView from loading the tel: link
-                        } else if (url.startsWith("mailto:")) {
-                            val intent = Intent(Intent.ACTION_SENDTO, Uri.parse(url))
-                            context.startActivity(intent)
-                            return true // Prevent WebView from loading the mailto: link
-                        }
-                        return false
-                    }
-
-                    override fun onReceivedError(
-                        view: WebView?,
-                        request: WebResourceRequest?,
-                        error: WebResourceError?
-                    ) {
-                        super.onReceivedError(view, request, error)
-                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                            if (error?.description.toString() != "net::ERR_NAME_NOT_RESOLVED") {
-                                error?.let { delegate?.onReceivedError(it.description.toString()) }
-                            }
-                        } else {
-                            delegate?.onReceivedError("error")
-                        }
-                    }
-
-
-                }
-
+                webChromeClient = createWebChromeClient()
+                webViewClient = createWebViewClient()
             }
-            webView!!.setDownloadListener { url, userAgent, contentDisposition, mimeType, contentLength ->
-                val request = DownloadManager.Request(Uri.parse(url))
-                request.setMimeType(mimeType)
-                request.addRequestHeader("User-Agent", userAgent)
-                request.setTitle(URLUtil.guessFileName(url, contentDisposition, mimeType))
-                request.setDescription("Downloading file...")
-                request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
-                request.setDestinationInExternalPublicDir(
-                    Environment.DIRECTORY_DOWNLOADS,
-                    URLUtil.guessFileName(url, contentDisposition, mimeType)
-                )
-
-                val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-                dm.enqueue(request)
+            webView!!.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
+                enqueueDownload(url, userAgent, contentDisposition, mimeType)
             }
         }
         return webView!!
+    }
+
+    private fun createWebChromeClient(): WebChromeClient {
+        return object : WebChromeClient() {
+            override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
+                Log.d(
+                    "CustomWebViewPlugin",
+                    "WebViewConsole: ${consoleMessage.message()} at " +
+                        "${consoleMessage.sourceId()}:${consoleMessage.lineNumber()}"
+                )
+                return true
+            }
+
+            override fun onJsAlert(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: JsResult?
+            ): Boolean {
+                delegate?.onJsAlert(url, message)
+                return true
+            }
+
+            override fun onPermissionRequest(request: PermissionRequest?) {
+                request?.grant(request.resources)
+            }
+
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: FileChooserParams
+            ): Boolean {
+                handleFileChooser(filePathCallback, fileChooserParams)
+                return true
+            }
+
+            override fun onCreateWindow(
+                view: WebView?,
+                isDialog: Boolean,
+                isUserGesture: Boolean,
+                resultMsg: Message?
+            ): Boolean {
+                return showPopupWebView(resultMsg)
+            }
+        }
+    }
+
+    private fun handleFileChooser(
+        filePathCallback: ValueCallback<Array<Uri>>,
+        fileChooserParams: WebChromeClient.FileChooserParams
+    ) {
+        Log.d("CustomWebViewPlugin", "onShowFileChooser === ${fileChooserParams.mode}")
+        val acceptTypes = arrayOf("application/pdf", "image/*", "video/*", "*/*")
+        val mimeTypes = fileChooserParams.acceptTypes?.joinToString(",") ?: ""
+        if (acceptTypes.contains(mimeTypes) && !mimeTypes.contains("text/vcard")) {
+            setFilePathCallback(filePathCallback)
+            openFileChooser()
+        }
+    }
+
+    private fun showPopupWebView(resultMsg: Message?): Boolean {
+        val popupWebView = WebView(activity ?: context).apply {
+            settings.javaScriptEnabled = true
+            settings.javaScriptCanOpenWindowsAutomatically = true
+            settings.setSupportMultipleWindows(true)
+        }
+        popupWebView.webViewClient = createPopupWebViewClient()
+        popupWebView.webChromeClient = createPopupWebChromeClient(popupWebView)
+        val dialog = AlertDialog.Builder(activity ?: context).apply {
+            setView(popupWebView)
+            setOnDismissListener { popupWebView.destroy() }
+        }.setPositiveButton("Close") { dialogInterface, _ ->
+            (popupWebView.parent as ViewGroup).removeView(popupWebView)
+            dialogInterface.dismiss()
+        }.create()
+        dialog.window?.setSoftInputMode(WindowManager.LayoutParams.SOFT_INPUT_ADJUST_RESIZE)
+        dialog.show()
+        val transport = resultMsg!!.obj as WebView.WebViewTransport
+        transport.webView = popupWebView
+        resultMsg.sendToTarget()
+        return true
+    }
+
+    private fun createPopupWebViewClient(): WebViewClient {
+        return object : WebViewClient() {
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
+                Log.d("WebPageActivity", "Popup WebView URL: ${request?.url}")
+                val url = request?.url.toString()
+                if (url.endsWith(".pdf") || url.contains("download")) {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    return true
+                }
+                return false
+            }
+        }
+    }
+
+    private fun createPopupWebChromeClient(popupWebView: WebView): WebChromeClient {
+        return object : WebChromeClient() {
+            override fun onCloseWindow(window: WebView) {
+                Log.d("WebPageActivity", "Popup WebView closed")
+                popupWebView.destroy()
+            }
+
+            override fun onJsAlert(
+                view: WebView?,
+                url: String?,
+                message: String?,
+                result: JsResult?
+            ): Boolean {
+                delegate?.onJsAlert(url, message)
+                return true
+            }
+
+            override fun onPermissionRequest(request: PermissionRequest?) {
+                request?.grant(request.resources)
+            }
+
+            override fun onShowFileChooser(
+                webView: WebView?,
+                filePathCallback: ValueCallback<Array<Uri>>,
+                fileChooserParams: WebChromeClient.FileChooserParams
+            ): Boolean {
+                handleFileChooser(filePathCallback, fileChooserParams)
+                return true
+            }
+        }
+    }
+
+    private fun createWebViewClient(): WebViewClient {
+        return object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, url: String?) {
+                super.onPageFinished(view, url)
+                delegate?.onPageFinished(url ?: "")
+            }
+
+            override fun shouldOverrideUrlLoading(
+                view: WebView?,
+                request: WebResourceRequest?
+            ): Boolean {
+                Log.d("CustomWebViewPlugin", "shouldOverrideUrlLoading === ${view?.url}")
+                val url = request?.url.toString()
+                when {
+                    url.endsWith(".pdf") || url.contains("download") || url.contains("SH=") -> {
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        return true
+                    }
+                    url.startsWith("tel:") -> {
+                        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse(url)))
+                        return true
+                    }
+                    url.startsWith("mailto:") -> {
+                        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse(url)))
+                        return true
+                    }
+                }
+                return false
+            }
+
+            override fun onReceivedError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                error: WebResourceError?
+            ) {
+                super.onReceivedError(view, request, error)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    if (error?.description.toString() != "net::ERR_NAME_NOT_RESOLVED") {
+                        error?.let { delegate?.onReceivedError(it.description.toString()) }
+                    }
+                } else {
+                    delegate?.onReceivedError("error")
+                }
+            }
+        }
+    }
+
+    private fun enqueueDownload(
+        url: String,
+        userAgent: String,
+        contentDisposition: String,
+        mimeType: String
+    ) {
+        val request = DownloadManager.Request(Uri.parse(url))
+        request.setMimeType(mimeType)
+        request.addRequestHeader("User-Agent", userAgent)
+        request.setTitle(URLUtil.guessFileName(url, contentDisposition, mimeType))
+        request.setDescription("Downloading file...")
+        request.setNotificationVisibility(
+            DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED
+        )
+        request.setDestinationInExternalPublicDir(
+            Environment.DIRECTORY_DOWNLOADS,
+            URLUtil.guessFileName(url, contentDisposition, mimeType)
+        )
+        val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+        dm.enqueue(request)
     }
 
 
@@ -423,9 +411,6 @@ class WebViewManager private constructor(
     fun destroyWebView() {
         isWebViewPaused = true
         Log.d("CustomWebViewPlugin", "destroyWebView")
-        //   webView?.loadUrl("about:blank")
-        //   webView?.onPause()
-        //   webView?.pauseTimers()
         webView?.apply {
             destroy()
         }
@@ -448,27 +433,6 @@ class WebViewManager private constructor(
                 }
             }
         }
-    }
-
-
-    private fun getSelectedFiles(data: Intent): Array<Uri?>? {
-        // we have one files selected
-        if (data.data != null) {
-            val dataString = data.dataString
-            if (dataString != null) {
-                return arrayOf(Uri.parse(dataString))
-            }
-        }
-        // we have multiple files selected
-        if (data.clipData != null) {
-            val numSelectedFiles = data.clipData!!.itemCount
-            val result = arrayOfNulls<Uri>(numSelectedFiles)
-            for (i in 0 until numSelectedFiles) {
-                result[i] = data.clipData!!.getItemAt(i).uri
-            }
-            return result
-        }
-        return null
     }
 
 }
