@@ -131,25 +131,23 @@ class CustomWebViewPlugin {
 
   /// Registers a callback to receive events from the JavaScript channel stream.
   static void getJavaScriptChannelStream(
-    void Function(Object?) callback,
+    void Function(dynamic) callback,
   ) {
     _eventChannel.receiveBroadcastStream().listen(callback);
   }
 
   /// Registers a callback to be called when the WebView finishes loading.
   static void setWebViewLoadedCallback(
-    void Function(Object?) callback,
+    void Function(dynamic) callback,
   ) {
-    _eventChannel.receiveBroadcastStream().listen((Object? event) {
+    _eventChannel.receiveBroadcastStream().listen((dynamic event) {
       debugPrint("$event");
       callback(event);
     });
   }
 
   /// Sets whether user interaction is enabled on the WebView.
-  static Future<void> setUserInteractionEnabled({
-    required bool enabled,
-  }) async {
+  static Future<void> setUserInteractionEnabled(bool enabled) async {
     try {
       await _channel.invokeMethod<void>(
         "setUserInteractionEnabled",
