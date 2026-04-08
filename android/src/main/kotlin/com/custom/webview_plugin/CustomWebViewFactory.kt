@@ -7,6 +7,7 @@ import android.app.DownloadManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.net.http.SslError
 import android.os.Build
 import android.os.Environment
 import android.os.Message
@@ -18,6 +19,7 @@ import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.JsResult
 import android.webkit.PermissionRequest
+import android.webkit.SslErrorHandler
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -30,6 +32,8 @@ import androidx.activity.ComponentActivity
 import androidx.activity.result.ActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import io.flutter.plugin.common.BinaryMessenger
+import io.flutter.plugin.common.MethodCall
+import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.StandardMessageCodec
 import io.flutter.plugin.platform.PlatformView
 import io.flutter.plugin.platform.PlatformViewFactory
@@ -38,12 +42,11 @@ import io.flutter.plugin.platform.PlatformViewFactory
 
 class CustomWebViewFactory(
     private val messenger: BinaryMessenger,
-    private val delegate: WebViewControllerDelegate?,
-    private val webViewManager: WebViewManager
+    private val activity: Activity?
 ) : PlatformViewFactory(StandardMessageCodec.INSTANCE) {
 
     override fun create(context: Context, viewId: Int, args: Any?): PlatformView {
-        return WebViewMoFlutter(context, viewId, args, messenger, delegate, webViewManager)
+        return WebViewMoFlutter(context, viewId, args, messenger, activity)
     }
 }
 
@@ -52,27 +55,204 @@ class WebViewMoFlutter(
     viewId: Int,
     args: Any?,
     messenger: BinaryMessenger,
-    private val delegate: WebViewControllerDelegate?,
-    private val webViewManager: WebViewManager
-) : PlatformView {
+    private val activity: Activity?
+) : PlatformView, MethodChannel.MethodCallHandler, WebViewControllerDelegate {
 
+    private val webViewManager: WebViewManager = WebViewManager(context, activity)
     private val webView: WebView = webViewManager.getOrCreateWebView()
+    private val methodChannel: MethodChannel = MethodChannel(messenger, "custom_webview_flutter_$viewId")
+    private var isReloadingFromDart = false
 
     init {
-        // Initialization handled by WebViewManager
+        methodChannel.setMethodCallHandler(this)
+        webViewManager.delegate = this
+
+        // Process creation arguments
+        if (args is Map<*, *>) {
+            val initialUrl = args["initialUrl"] as? String
+            val headers = args["headers"] as? Map<String, String>
+            val jsChannels = (args["javaScriptChannelNames"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
+            val zoomEnabled = args["zoomEnabled"] as? Boolean ?: true
+            val multipleWindows = args["enableMultipleWindows"] as? Boolean ?: true
+            
+            webViewManager.enableZoom(zoomEnabled)
+            webViewManager.enableMultipleWindows(multipleWindows)
+            if (initialUrl != null) {
+                webViewManager.loadURL(initialUrl, jsChannels, headers)
+            }
+        }
     }
 
     override fun getView(): WebView = webView
 
+    override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
+        when (call.method) {
+            "loadUrl" -> handleLoadUrl(call, result)
+            "loadHtmlData" -> handleLoadHtmlData(call, result)
+            "runJavaScript" -> handleRunJavaScript(call, result)
+            "reloadUrl" -> { webViewManager.webView?.reload(); result.success(null) }
+            "resetCache" -> { webViewManager.resetWebViewCache(); result.success(null) }
+            "addJavascriptChannel" -> handleAddJavascriptChannel(call, result)
+            "removeJavascriptChannel" -> {
+                val channelName = call.argument<String>("channelName")
+                if (channelName != null) {
+                    webViewManager.webView?.removeJavascriptInterface(channelName)
+                }
+                result.success(null)
+            }
+            "getCurrentUrl" -> result.success(webViewManager.webView?.url)
+            "setCustomUserAgent" -> {
+                val userAgent = call.argument<String>("userAgent")
+                webViewManager.webView?.settings?.userAgentString = userAgent
+                result.success(null)
+            }
+            "enableMultipleWindows" -> {
+                val enabled = call.argument<Boolean>("enabled") ?: false
+                webViewManager.enableMultipleWindows(enabled)
+                result.success(null)
+            }
+            "setUserInteractionEnabled" -> {
+                val enabled = call.argument<Boolean>("enabled") ?: true
+                webViewManager.webView?.isClickable = enabled
+                webViewManager.webView?.isEnabled = enabled
+                result.success(null)
+            }
+            "setBackgroundColor" -> {
+                val color = call.argument<Int>("color")
+                if (color != null) {
+                    activity?.runOnUiThread {
+                        webViewManager.webView?.setBackgroundColor(color)
+                    }
+                }
+                result.success(null)
+            }
+            else -> result.notImplemented()
+        }
+    }
+
+    private fun handleLoadUrl(call: MethodCall, result: MethodChannel.Result) {
+        val urlString = call.argument<String>("initialUrl")
+        if (urlString != null) {
+            val jsChannels = call.argument<List<String>>("javaScriptChannelNames") ?: emptyList()
+            val zoomEnabled = call.argument<Boolean>("zoomEnabled")
+            val enableMultipleWindows = call.argument<Boolean>("enableMultipleWindows")
+            val headers = call.argument<Map<String, String>>("headers")
+            webViewManager.loadURL(urlString, jsChannels, headers)
+            webViewManager.enableZoom(zoomEnabled ?: false)
+            webViewManager.enableMultipleWindows(enableMultipleWindows ?: false)
+            result.success(null)
+        } else {
+            result.error("INVALID_ARGUMENT", "URL is required", null)
+        }
+    }
+
+    private fun handleLoadHtmlData(call: MethodCall, result: MethodChannel.Result) {
+        val htmlContent = call.argument<String>("htmlString") ?: run {
+            result.error("INVALID_ARGUMENT", "HTML content is required", null)
+            return
+        }
+        val jsChannels = call.argument<List<String>>("javaScriptChannelNames") ?: emptyList()
+        val baseURL = call.argument<String>("baseURL")
+        val allowMixedContent = call.argument<Boolean>("allowMixedContent") ?: false
+
+        if (allowMixedContent && Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+            webViewManager.webView?.settings?.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        }
+        webViewManager.loadHtmlContent(htmlContent, jsChannels, baseURL)
+        result.success(null)
+    }
+
+    private fun handleRunJavaScript(call: MethodCall, result: MethodChannel.Result) {
+        val script = call.argument<String>("script")
+        if (script != null) {
+            webViewManager.evaluateJavaScript(script) { response, error ->
+                if (error != null) {
+                    result.error("JAVASCRIPT_ERROR", error.localizedMessage, null)
+                } else {
+                    result.success(response)
+                }
+            }
+        } else {
+            result.error("INVALID_ARGUMENT", "JavaScript code is required", null)
+        }
+    }
+
+    private fun handleAddJavascriptChannel(call: MethodCall, result: MethodChannel.Result) {
+        val channelName = call.argument<String>("channelName")
+        if (channelName != null) {
+            webViewManager.addJavascriptChannel(channelName)
+            result.success(null)
+        } else {
+            result.error("INVALID_ARGUMENT", "Channel name is required", null)
+        }
+    }
+
     override fun dispose() {
         Log.d("CustomWebViewPlugin", "dispose")
+        methodChannel.setMethodCallHandler(null)
         webViewManager.destroyWebView()
+    }
+
+    override fun pageDidLoad() {
+        methodChannel.invokeMethod("pageLoaded", null)
+    }
+
+    override fun onMessageReceived(message: String) {
+        methodChannel.invokeMethod("onMessageReceived", message)
+    }
+
+    override fun onJavascriptChannelMessageReceived(channelName: String, message: String) {
+        methodChannel.invokeMethod(
+            "onJavascriptChannelMessageReceived",
+            mapOf("channelName" to channelName, "message" to message)
+        )
+    }
+
+    override fun onNavigationRequest(url: String): Boolean {
+        if (isReloadingFromDart) {
+            isReloadingFromDart = false
+            return true // Allow the reload
+        }
+
+        activity?.runOnUiThread {
+            methodChannel.invokeMethod("onNavigationRequest", mapOf("url" to url), object : MethodChannel.Result {
+                override fun success(result: Any?) {
+                    if (result as? Boolean == true) {
+                        isReloadingFromDart = true
+                        webViewManager.webView?.loadUrl(url)
+                    }
+                }
+                override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {}
+                override fun notImplemented() {}
+            })
+        }
+        return false // Intercept initially
+    }
+
+    override fun onPageStarted(url: String) {
+        methodChannel.invokeMethod("onPageStarted", mapOf("url" to url))
+    }
+
+    override fun onPageFinished(url: String) {
+        methodChannel.invokeMethod("onPageFinished", mapOf("url" to url))
+    }
+
+    override fun onProgress(progress: Int) {
+        methodChannel.invokeMethod("onProgress", mapOf("progress" to progress))
+    }
+
+    override fun onReceivedError(message: String) {
+        methodChannel.invokeMethod("onReceivedError", mapOf("message" to message))
+    }
+
+    override fun onJsAlert(url: String?, message: String?) {
+        methodChannel.invokeMethod("onJsAlert", mapOf("url" to url, "message" to message))
     }
 }
 
 val FILECHOOSER_RESULTCODE = 1
 
-class WebViewManager private constructor(
+class WebViewManager(
     private val context: Context,
     private val activity: Activity?
 ) {
@@ -140,6 +320,11 @@ class WebViewManager private constructor(
 
     private fun createWebChromeClient(): WebChromeClient {
         return object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                super.onProgressChanged(view, newProgress)
+                delegate?.onProgress(newProgress)
+            }
+
             override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
                 Log.d(
                     "CustomWebViewPlugin",
@@ -166,7 +351,7 @@ class WebViewManager private constructor(
             override fun onShowFileChooser(
                 webView: WebView?,
                 filePathCallback: ValueCallback<Array<Uri>>,
-                fileChooserParams: FileChooserParams
+                fileChooserParams: WebChromeClient.FileChooserParams
             ): Boolean {
                 handleFileChooser(filePathCallback, fileChooserParams)
                 return true
@@ -270,6 +455,11 @@ class WebViewManager private constructor(
 
     private fun createWebViewClient(): WebViewClient {
         return object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                super.onPageStarted(view, url, favicon)
+                delegate?.onPageStarted(url ?: "")
+            }
+
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
                 delegate?.onPageFinished(url ?: "")
@@ -279,8 +469,14 @@ class WebViewManager private constructor(
                 view: WebView?,
                 request: WebResourceRequest?
             ): Boolean {
-                Log.d("CustomWebViewPlugin", "shouldOverrideUrlLoading === ${view?.url}")
                 val url = request?.url.toString()
+                Log.d("CustomWebViewPlugin", "shouldOverrideUrlLoading === $url")
+                
+                // Allow blocking from Dart (returns false to intercept)
+                if (delegate?.onNavigationRequest(url) == false) {
+                    return true // Block
+                }
+
                 when {
                     url.endsWith(".pdf") || url.contains("download") || url.contains("SH=") -> {
                         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
@@ -304,13 +500,19 @@ class WebViewManager private constructor(
                 error: WebResourceError?
             ) {
                 super.onReceivedError(view, request, error)
+                // Only report errors for the main page frame
+                if (request?.isForMainFrame != true) return
+
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-                    if (error?.description.toString() != "net::ERR_NAME_NOT_RESOLVED") {
-                        error?.let { delegate?.onReceivedError(it.description.toString()) }
-                    }
+                    error?.let { delegate?.onReceivedError(it.description.toString()) }
                 } else {
                     delegate?.onReceivedError("error")
                 }
+            }
+
+            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
+                // Proceed past SSL errors to support self-signed / internal certificates.
+                handler?.proceed()
             }
         }
     }
@@ -338,21 +540,18 @@ class WebViewManager private constructor(
     }
 
 
-    fun loadHtmlContent(htmlContent: String, javaScriptChannelName: String?) {
-        Log.d("CustomWebViewPlugin", "HTML content being loaded: $htmlContent")
+    fun loadHtmlContent(htmlContent: String, javaScriptChannelNames: List<String>, baseURL: String? = null) {
         webView = getOrCreateWebView()
-        if (htmlContent.isEmpty()) {
-            Log.e("CustomWebViewPlugin", "HTML content is empty!")
-            return
-        }
-
-        // Ensure JavaScript channel is added if specified
-        if (!javaScriptChannelName.isNullOrEmpty()) {
-            addJavascriptChannel(javaScriptChannelName)
-        }
+        if (htmlContent.isEmpty()) return
+        
+        javaScriptChannelNames.forEach { addJavascriptChannel(it) }
 
         // Load HTML content using loadDataWithBaseURL for better compatibility
-        webView?.loadData( htmlContent, "text/html", "UTF-8")
+        if (baseURL != null) {
+            webView?.loadDataWithBaseURL(baseURL, htmlContent, "text/html", "UTF-8", null)
+        } else {
+            webView?.loadDataWithBaseURL(null, htmlContent, "text/html", "UTF-8", null)
+        }
 
         if (isWebViewPaused) {
             resumeWebView()
@@ -360,13 +559,15 @@ class WebViewManager private constructor(
     }
 
 
-    fun loadURL(urlString: String, javaScriptChannelName: String?) {
+    fun loadURL(urlString: String, javaScriptChannelNames: List<String>, headers: Map<String, String>? = null) {
         Log.d("CustomWebViewPlugin", "loadURL : $urlString")
         if (urlString.isNotEmpty()) {
-            if (javaScriptChannelName != null) {
-                addJavascriptChannel(javaScriptChannelName)
+            javaScriptChannelNames.forEach { addJavascriptChannel(it) }
+            if (headers != null && headers.isNotEmpty()) {
+                webView?.loadUrl(urlString, headers)
+            } else {
+                webView?.loadUrl(urlString)
             }
-            webView?.loadUrl(urlString)
         }
         if (isWebViewPaused) resumeWebView()
     }
@@ -423,26 +624,16 @@ class WebViewManager private constructor(
         webView?.resumeTimers()
     }
 
-    companion object {
-        private var INSTANCE: WebViewManager? = null
-
-        fun getInstance(context: Context, activity: Activity?): WebViewManager {
-            return INSTANCE ?: synchronized(this) {
-                INSTANCE ?: WebViewManager(context.applicationContext, activity).also {
-                    INSTANCE = it
-                }
-            }
-        }
-    }
-
 }
 
 interface WebViewControllerDelegate {
     fun pageDidLoad()
     fun onMessageReceived(message: String)
     fun onJavascriptChannelMessageReceived(channelName: String, message: String)
-    fun onNavigationRequest(url: String)
+    fun onNavigationRequest(url: String): Boolean
+    fun onPageStarted(url: String)
     fun onPageFinished(url: String)
+    fun onProgress(progress: Int)
     fun onReceivedError(message: String)
     fun onJsAlert(url: String?, message: String?)
 }

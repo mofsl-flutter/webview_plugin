@@ -1,170 +1,61 @@
 import Flutter
 import UIKit
 import WebKit
+import UniformTypeIdentifiers
 
-public class CustomWebViewPlugin: NSObject, FlutterPlugin, WKScriptMessageHandler, WebViewControllerDelegate {
-    private var webView: WKWebView?
-    private var channel: FlutterMethodChannel?
-
+public class CustomWebViewPlugin: NSObject, FlutterPlugin {
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(name: "custom_webview_flutter", binaryMessenger: registrar.messenger())
-        let eventChannel = FlutterEventChannel(name: "custom_webview_plugin_events", binaryMessenger: registrar.messenger())
         let instance = CustomWebViewPlugin()
         registrar.addMethodCallDelegate(instance, channel: channel)
-        eventChannel.setStreamHandler(instance)
 
         // Initialize the view factory
-        let factory = CustomWebViewFactory(messenger: registrar.messenger(), delegate: instance)
+        let factory = CustomWebViewFactory(messenger: registrar.messenger())
         registrar.register(factory, withId: "custom_webview_flutter")
     }
     
-    private var eventSink: FlutterEventSink?
-    
     public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
         switch call.method {
-        case "loadUrl":
-            if let args = call.arguments as? [String: Any],
-               let urlString = args["initialUrl"] as? String {
-                let javaScriptChannelName = args["javaScriptChannelName"] as? String
-                let isChart = args["isChart"] as? Bool ?? true
-                let zoomEnabled = args["zoomEnabled"] as? Bool ?? true
-                print("Received isChart: \(isChart), zoomEnabled: \(zoomEnabled)")
-                WebViewManager.shared.loadURL(urlString, isChart, withJavaScriptChannel: javaScriptChannelName, zoomEnabled: zoomEnabled, plugin: self)
-                result(nil)
-            } else {
-                result(FlutterError(code: "INVALID_ARGUMENT", message: "URL is required", details: nil))
-            }
-        case "loadHtmlData":
-    if let args = call.arguments as? [String: Any],
-       let htmlString = args["htmlString"] as? String {
-        let baseURLString = args["baseURL"] as? String
-        let baseURL = baseURLString != nil ? URL(string: baseURLString!) : nil
-        let javaScriptChannelName = args["javaScriptChannelName"] as? String // New parameter
-        WebViewManager.shared.loadHtmlData(
-            htmlString: htmlString,
-            baseURL: baseURL,
-            javaScriptChannelName: javaScriptChannelName
-        )
-        result(nil)
-    } else {
-        result(FlutterError(code: "INVALID_ARGUMENT", message: "HTML string is required", details: nil))
-    }
-        case "runJavaScript":
-            if let script = (call.arguments as? [String: Any])?["script"] as? String {
-                WebViewManager.shared.evaluateJavaScript(script, completionHandler: { (response, error) in
-                    if let error = error {
-                        result(FlutterError(code: "JAVASCRIPT_ERROR", message: error.localizedDescription, details: nil))
-                    } else {
-                        result(response)
-                    }
-                })
-            } else {
-                result(FlutterError(code: "INVALID_ARGUMENT", message: "JavaScript code is required", details: nil))
-            }
-        case "reloadUrl":
-            WebViewManager.shared.webView?.reload()
-            result(nil)
         case "resetCache":
-            WebViewManager.shared.resetWebViewCache()
-            result(nil)
-        case "addJavascriptChannel":
-            if let args = call.arguments as? [String: Any], let channelName = args["channelName"] as? String {
-                WebViewManager.shared.addJavascriptChannel(name: channelName)
+            let websiteDataTypes = WKWebsiteDataStore.allWebsiteDataTypes()
+            let date = Date(timeIntervalSince1970: 0)
+            WKWebsiteDataStore.default().removeData(ofTypes: websiteDataTypes, modifiedSince: date, completionHandler: {
                 result(nil)
-            } else {
-                result(FlutterError(code: "INVALID_ARGUMENT", message: "Channel name is required", details: nil))
-            }
-        case "getCurrentUrl":
-            result(WebViewManager.shared.webView?.url?.absoluteString)
-        case "setUserInteractionEnabled":
-            if let args = call.arguments as? [String: Any],
-               let enabled = args["enabled"] as? Bool {
-                WebViewManager.shared.setUserInteractionEnabled(enabled)
+            })
+        case "clearCookies":
+            let cookieStore = WKWebsiteDataStore.default().httpCookieStore
+            cookieStore.getAllCookies { cookies in
+                for cookie in cookies {
+                    cookieStore.delete(cookie)
+                }
                 result(nil)
-            } else {
-                result(FlutterError(code: "INVALID_ARGUMENT", message: "enabled parameter is required", details: nil))
             }
         default:
             result(FlutterMethodNotImplemented)
         }
     }
-    
-    @objc public func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        print("Received message: \(message.name) with body: \(message.body)")
-        if let messageBody = message.body as? String {
-            print("Received message from JavaScript: \(messageBody)")
-            eventSink?(messageBody)
-        }
-    }
-    
-    func sendMessageBody(body: String) {
-        eventSink?(body)
-    }
-    
-    func pageDidLoad(url: String) {
-        eventSink?(["event": "pageFinished", "url": url])
-    }
-
-    func onPageLoadError() {
-        eventSink?(["event": "error", "message": "error"])
-    }
-
-    func onJavascriptChannelMessageReceived(channelName: String, message: String) {
-        eventSink?(["event": "javascriptChannelMessageReceived",  "channelName" : channelName, "message": message])
-    }
-
-    func onNavigationRequest(url: String) {
-
-    }
-
-    func onPageFinished(url: String) {
-        eventSink?(["event": "pageFinished", "url": url])
-    }
-
-    func onReceivedError(message: String) {
-
-    }
-
-    func onJsAlert(url: String, message: String) {
-
-    }
-
 }
 
-
-
-extension CustomWebViewPlugin: FlutterStreamHandler {
-    public func onListen(withArguments arguments: Any?, eventSink events: @escaping FlutterEventSink) -> FlutterError? {
-        self.eventSink = events
-        WebViewManager.shared.delegate = self
-        return nil
-    }
-
-    public func onCancel(withArguments arguments: Any?) -> FlutterError? {
-        self.eventSink = nil
-        WebViewManager.shared.delegate = nil
-        return nil
-    }
-
-}
-
-protocol WebViewControllerDelegate: AnyObject {
+public protocol WebViewControllerDelegate: AnyObject {
     func pageDidLoad(url: String)
     func sendMessageBody(body: String)
     func onPageLoadError()
     func onJavascriptChannelMessageReceived(channelName: String, message: String)
-    func onNavigationRequest(url: String)
+    func onNavigationRequest(url: String, completion: @escaping (Bool) -> Void)
+    func onPageStarted(url: String)
     func onPageFinished(url: String)
+    func onProgress(progress: Int)
     func onReceivedError(message: String)
     func onJsAlert(url: String, message: String)
 }
 
 class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
-    static let shared = WebViewManager()
     var webView: WKWebView!
     weak var delegate: WebViewControllerDelegate?
     private var configuredJavaScriptChannels: Set<String> = []
     private var isChart = true
+    private var progressObserver: NSKeyValueObservation?
+    private var fileUploadCompletionHandler: (([URL]?) -> Void)?
 
     override init() {
         super.init()
@@ -175,10 +66,23 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         webView = WKWebView(frame: .zero, configuration: configuration)
         webView.uiDelegate = self
         webView.navigationDelegate = self
-        addJavascriptChannel(name: "ChartAppDelegate")
+        _ = addJavascriptChannel(name: "ChartAppDelegate")
+        
+        setupProgressObserver()
     }
 
-    func loadURL(_ urlString: String, _ isFromChart: Bool, withJavaScriptChannel javaScriptChannelName: String?, zoomEnabled: Bool, plugin: WKScriptMessageHandler) {
+    private func setupProgressObserver() {
+        progressObserver = webView.observe(\.estimatedProgress, options: [.new]) { [weak self] webView, _ in
+            let progress = Int(webView.estimatedProgress * 100)
+            self?.delegate?.onProgress(progress: progress)
+        }
+    }
+
+    deinit {
+        progressObserver?.invalidate()
+    }
+
+    func loadURL(_ urlString: String, _ isFromChart: Bool, withJavaScriptChannels channelNames: [String], zoomEnabled: Bool, headers: [String: String]? = nil) {
         isChart = isFromChart
         configureZoom(enabled: zoomEnabled)
         print("Received loadURL isChart: \(isChart), zoomEnabled: \(zoomEnabled)")
@@ -188,26 +92,27 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
             return
         }
 
-        if javaScriptChannelName != nil {
-            addJavascriptChannel(name: javaScriptChannelName ?? "ChartAppDelegate")
-        }
+        channelNames.forEach { _ = addJavascriptChannel(name: $0) }
 
         print("Loading URL: \(urlString)")
-        webView.load(URLRequest(url: url))
+        var request = URLRequest(url: url)
+        if let headers = headers {
+            for (key, value) in headers {
+                request.addValue(value, forHTTPHeaderField: key)
+            }
+        }
+        webView.load(request)
         
     }
 
-    func loadHtmlData(htmlString: String, baseURL: URL?, javaScriptChannelName: String?) {
-    print("Loading HTML data...")
+    func loadHtmlData(htmlString: String, baseURL: URL?, javaScriptChannelNames: [String]) {
+        print("Loading HTML data...")
 
-    // Add JavaScript channel if provided
-    if let channelName = javaScriptChannelName, !channelName.isEmpty {
-        addJavascriptChannel(name: channelName)
+        javaScriptChannelNames.forEach { _ = addJavascriptChannel(name: $0) }
+
+        // Load the HTML string
+        webView.loadHTMLString(htmlString, baseURL: baseURL)
     }
-
-    // Load the HTML string
-    webView.loadHTMLString(htmlString, baseURL: baseURL)
-}
 
     func getWebView(frame: CGRect) -> WKWebView {
         webView?.frame = frame
@@ -258,6 +163,11 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         return true
     }
 
+    func removeJavascriptChannel(name: String) {
+        webView.configuration.userContentController.removeScriptMessageHandler(forName: name)
+        configuredJavaScriptChannels.remove(name)
+    }
+
      func setUserInteractionEnabled(_ enabled: Bool) {
             DispatchQueue.main.async {
                 self.webView.isUserInteractionEnabled = enabled
@@ -270,6 +180,9 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         print("Started Loading: \(String(describing: webView.url))")
+        if let url = webView.url?.absoluteString {
+            delegate?.onPageStarted(url: url)
+        }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -290,50 +203,125 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
         print("JavaScript Alert: \(message)")
+        let url = webView.url?.absoluteString ?? ""
+        delegate?.onJsAlert(url: url, message: message)
         completionHandler()
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         print("Message received: \(message.name)")
-        if configuredJavaScriptChannels.contains(message.name) {
-            if let body = message.body as? String {
-                // Call the method if the channel is in the configured list
-                delegate?.onJavascriptChannelMessageReceived(channelName: message.name, message: body)
-            }
-        }
+        
+        var messageString = ""
         if let body = message.body as? String {
-            delegate?.sendMessageBody(body: body)
+            messageString = body
+        } else if let bodyData = try? JSONSerialization.data(withJSONObject: message.body, options: []),
+                  let bodyString = String(data: bodyData, encoding: .utf8) {
+            messageString = bodyString
         }
+
+        if configuredJavaScriptChannels.contains(message.name) {
+            delegate?.onJavascriptChannelMessageReceived(channelName: message.name, message: messageString)
+        }
+        
+        delegate?.sendMessageBody(body: messageString)
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if let url = navigationAction.request.url {
-            // Check if the URL is a file link
-            if url.absoluteString.contains(".pdf") || url.absoluteString.contains("SH=") || url.isFileURL {
-                // Open the URL in an external browser
-                UIApplication.shared.open(url, options: [:], completionHandler: nil)
-                decisionHandler(.cancel) // Cancel the navigation in WebView
-                return
+            
+            // Allow blocking from Dart
+            delegate?.onNavigationRequest(url: url.absoluteString) { allow in
+                if !allow {
+                    decisionHandler(.cancel)
+                    return
+                }
+                
+                // Check if the URL is a file link or special scheme
+                if url.absoluteString.contains(".pdf") || url.absoluteString.contains("SH=") || url.isFileURL {
+                    // Open the URL in an external browser
+                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                    decisionHandler(.cancel) // Cancel the navigation in WebView
+                    return
+                } else if (url.absoluteString.contains("tel:")) || (url.absoluteString.contains("mailto:")) {
+                    if UIApplication.shared.canOpenURL(url) {
+                      UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                      decisionHandler(.cancel)
+                      return
+                    }
+                }
+                
+                decisionHandler(.allow) // Allow navigation for other URLs
             }
+            return
         }
-        decisionHandler(.allow) // Allow navigation for other URLs
+        decisionHandler(.allow)
     }
 
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        if let url = navigationAction.request.url {
-            print("NEW WINDOW CREATED with URL: \(url)")
+        guard let url = navigationAction.request.url else { return nil }
 
-            // Create a new WKWebView with the provided configuration
-            let newWebView = WKWebView(frame: .zero, configuration: configuration)
-            newWebView.uiDelegate = self
-            newWebView.navigationDelegate = self
+        let newWebView = WKWebView(frame: .zero, configuration: configuration)
+        newWebView.uiDelegate = self
+        newWebView.navigationDelegate = self
 
-            self.webView.load(URLRequest(url: url))
+        newWebView.load(URLRequest(url: url))
 
-            return newWebView
+        return newWebView
+    }
+
+    func webView(
+        _ webView: WKWebView,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
+              let serverTrust = challenge.protectionSpace.serverTrust else {
+            completionHandler(.performDefaultHandling, nil)
+            return
         }
+        // Trust the certificate — supports self-signed / internal CA certificates.
+        completionHandler(.useCredential, URLCredential(trust: serverTrust))
+    }
 
-        return webView
+    @available(iOS 18.4, *)
+    func webView(
+        _ webView: WKWebView,
+        runOpenPanelWith parameters: WKOpenPanelParameters,
+        initiatedByFrame frame: WKFrameInfo,
+        completionHandler: @escaping ([URL]?) -> Void
+    ) {
+        fileUploadCompletionHandler = completionHandler
+
+        // Find the topmost view controller to present from
+        guard let rootVC = UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            completionHandler(nil)
+            return
+        }
+        var topVC = rootVC
+        while let presented = topVC.presentedViewController { topVC = presented }
+
+        if #available(iOS 14.0, *) {
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [.item], asCopy: true)
+            picker.allowsMultipleSelection = parameters.allowsMultipleSelection
+            picker.delegate = self
+            topVC.present(picker, animated: true)
+        } else {
+            // Fallback for older iOS if needed, but for now we target modern
+            completionHandler(nil)
+        }
+    }
+}
+
+@available(iOS 18.4, *)
+extension WebViewManager: UIDocumentPickerDelegate {
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        fileUploadCompletionHandler?(urls)
+        fileUploadCompletionHandler = nil
+    }
+
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        fileUploadCompletionHandler?(nil)
+        fileUploadCompletionHandler = nil
     }
 }
