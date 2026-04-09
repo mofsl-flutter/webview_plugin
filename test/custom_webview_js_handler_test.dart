@@ -7,6 +7,7 @@ void main() {
 
   group('CustomWebViewController JS Handler Extended Tests', () {
     late CustomWebViewController controller;
+    final List<MethodCall> log = <MethodCall>[];
 
     setUp(() {
       controller = CustomWebViewController();
@@ -16,12 +17,14 @@ void main() {
           .setMockMethodCallHandler(
         const MethodChannel('custom_webview_flutter_0'),
         (MethodCall methodCall) async {
-          if (methodCall.method == 'addJavascriptChannel') {
-            return null;
-          }
+          log.add(methodCall);
           return null;
         },
       );
+    });
+
+    tearDown(() {
+      log.clear();
     });
 
     test('onJavascriptChannelMessageReceived distinguishes between multiple channels', () async {
@@ -93,6 +96,45 @@ void main() {
         (ByteData? data) {},
       );
       expect(chartMessage, 'renderDone');
+    });
+
+    test('removeJavascriptChannel works and stops callbacks', () async {
+      String? message;
+      await controller.addJavascriptChannel('Test', onMessageReceived: (msg) => message = msg);
+      
+      expect(log.last.method, 'addJavascriptChannel');
+      expect(log.last.arguments['channelName'], 'Test');
+
+      final binding = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const codec = StandardMethodCodec();
+
+      // Send message while active
+      await binding.handlePlatformMessage(
+        'custom_webview_flutter_0',
+        codec.encodeMethodCall(const MethodCall('onJavascriptChannelMessageReceived', {
+          'channelName': 'Test',
+          'message': 'ping'
+        })),
+        (ByteData? data) {},
+      );
+      expect(message, 'ping');
+
+      // Remove channel
+      await controller.removeJavascriptChannel('Test');
+      expect(log.last.method, 'removeJavascriptChannel');
+      expect(log.last.arguments['channelName'], 'Test');
+
+      message = null;
+      // Send message after removal
+      await binding.handlePlatformMessage(
+        'custom_webview_flutter_0',
+        codec.encodeMethodCall(const MethodCall('onJavascriptChannelMessageReceived', {
+          'channelName': 'Test',
+          'message': 'pong'
+        })),
+        (ByteData? data) {},
+      );
+      expect(message, isNull); // Callback should not fire
     });
 
     test('runJavaScript handles null results correctly (Android style)', () async {

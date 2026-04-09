@@ -28,5 +28,17 @@ void main() {
       expect(log, hasLength(1));
       expect(log.first.method, 'clearCookies');
     });
+
+    test('clearCookies rethrows PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      
+      expect(() => CustomWebViewCookieManager.clearCookies(), throwsA(isA<PlatformException>()));
+    });
   });
 }

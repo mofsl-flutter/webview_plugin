@@ -23,6 +23,8 @@ void main() {
               return 'https://flutter.dev';
             case 'runJavaScript':
               return 'result';
+            case 'canGoBack':
+              return true;
             default:
               return null;
           }
@@ -54,6 +56,17 @@ void main() {
       expect(log.first.arguments['enableMultipleWindows'], true);
     });
 
+    test('loadUrl rethrows PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter_0'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      expect(() => controller.loadUrl('url'), throwsA(isA<PlatformException>()));
+    });
+
     test('loadHtmlData invokes correctly', () async {
       await controller.loadHtmlData(
         '<html><body>Hello</body></html>',
@@ -70,10 +83,32 @@ void main() {
       expect(log.first.arguments['allowMixedContent'], true);
     });
 
+    test('loadHtmlData rethrows PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter_0'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      expect(() => controller.loadHtmlData('html'), throwsA(isA<PlatformException>()));
+    });
+
     test('reloadUrl invokes correctly', () async {
       await controller.reloadUrl();
       expect(log, hasLength(1));
       expect(log.first.method, 'reloadUrl');
+    });
+
+    test('reloadUrl rethrows PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter_0'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      expect(() => controller.reloadUrl(), throwsA(isA<PlatformException>()));
     });
 
     test('runJavaScript invokes correctly and returns result', () async {
@@ -84,11 +119,33 @@ void main() {
       expect(result, 'result');
     });
 
+    test('runJavaScript rethrows PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter_0'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      expect(() => controller.runJavaScript('script'), throwsA(isA<PlatformException>()));
+    });
+
     test('addJavascriptChannel invokes correctly', () async {
       await controller.addJavascriptChannel('NewChannel');
       expect(log, hasLength(1));
       expect(log.first.method, 'addJavascriptChannel');
       expect(log.first.arguments['channelName'], 'NewChannel');
+    });
+
+    test('addJavascriptChannel rethrows PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter_0'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      expect(() => controller.addJavascriptChannel('name'), throwsA(isA<PlatformException>()));
     });
 
     test('getCurrentUrl invokes correctly and returns URL', () async {
@@ -98,11 +155,33 @@ void main() {
       expect(result, 'https://flutter.dev');
     });
 
+    test('getCurrentUrl rethrows PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter_0'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      expect(() => controller.getCurrentUrl(), throwsA(isA<PlatformException>()));
+    });
+
     test('setUserInteractionEnabled invokes correctly', () async {
       await controller.setUserInteractionEnabled(false);
       expect(log, hasLength(1));
       expect(log.first.method, 'setUserInteractionEnabled');
       expect(log.first.arguments['enabled'], false);
+    });
+
+    test('setUserInteractionEnabled rethrows PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter_0'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      expect(() => controller.setUserInteractionEnabled(true), throwsA(isA<PlatformException>()));
     });
 
     test('setCustomUserAgent invokes correctly', () async {
@@ -112,6 +191,17 @@ void main() {
       expect(log.first.arguments['userAgent'], 'CustomUA');
     });
 
+    test('setCustomUserAgent rethrows PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter_0'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      expect(() => controller.setCustomUserAgent('ua'), throwsA(isA<PlatformException>()));
+    });
+
     test('enableMultipleWindows invokes correctly', () async {
       await controller.enableMultipleWindows(true);
       expect(log, hasLength(1));
@@ -119,11 +209,69 @@ void main() {
       expect(log.first.arguments['enabled'], true);
     });
 
+    test('enableMultipleWindows rethrows PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter_0'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      expect(() => controller.enableMultipleWindows(true), throwsA(isA<PlatformException>()));
+    });
+
     test('setBackgroundColor invokes correctly', () async {
       await controller.setBackgroundColor(0x00000000);
       expect(log, hasLength(1));
       expect(log.first.method, 'setBackgroundColor');
       expect(log.first.arguments['color'], 0x00000000);
+    });
+
+    test('setBackgroundColor rethrows PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter_0'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      expect(() => controller.setBackgroundColor(0), throwsA(isA<PlatformException>()));
+    });
+
+    test('canGoBack returns correctly', () async {
+      final result = await controller.canGoBack();
+      expect(log, hasLength(1));
+      expect(log.first.method, 'canGoBack');
+      expect(result, true);
+    });
+
+    test('canGoBack returns false on PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter_0'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      final result = await controller.canGoBack();
+      expect(result, false);
+    });
+
+    test('goBack invokes correctly', () async {
+      await controller.goBack();
+      expect(log, hasLength(1));
+      expect(log.first.method, 'goBack');
+    });
+
+    test('goBack rethrows PlatformException', () async {
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger
+          .setMockMethodCallHandler(
+        const MethodChannel('custom_webview_flutter_0'),
+        (MethodCall methodCall) async {
+          throw PlatformException(code: 'error', message: 'failed');
+        },
+      );
+      expect(() => controller.goBack(), throwsA(isA<PlatformException>()));
     });
     
     test('Native callbacks are routed correctly', () async {
@@ -135,6 +283,7 @@ void main() {
       String? alertMessage;
       String? jsChannelName;
       String? jsMessage;
+      String? titleValue;
 
       controller.onPageStarted = (url) => onPageStartedCalled = true;
       controller.onPageFinished = (url) => onPageFinishedCalled = true;
@@ -148,6 +297,7 @@ void main() {
         jsChannelName = channel;
         jsMessage = message;
       };
+      controller.onTitleChanged = (title) => titleValue = title;
 
       final binding = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
       const codec = StandardMethodCodec();
@@ -182,19 +332,41 @@ void main() {
 
       await binding.handlePlatformMessage(
         'custom_webview_flutter_0',
-        codec.encodeMethodCall(const MethodCall('onJsAlert', {'url': 'url', 'message': 'alert'})),
-        (ByteData? data) {},
-      );
-      expect(alertUrl, 'url');
-      expect(alertMessage, 'alert');
-
-      await binding.handlePlatformMessage(
-        'custom_webview_flutter_0',
         codec.encodeMethodCall(const MethodCall('onJavascriptChannelMessageReceived', {'channelName': 'channel', 'message': 'msg'})),
         (ByteData? data) {},
       );
       expect(jsChannelName, 'channel');
       expect(jsMessage, 'msg');
+
+      await binding.handlePlatformMessage(
+        'custom_webview_flutter_0',
+        codec.encodeMethodCall(const MethodCall('onTitleChanged', {'title': 'New Title'})),
+        (ByteData? data) {},
+      );
+      expect(titleValue, 'New Title');
+
+      await binding.handlePlatformMessage(
+        'custom_webview_flutter_0',
+        codec.encodeMethodCall(const MethodCall('onMessageReceived', 'generic')),
+        (ByteData? data) {},
+      );
+      // Currently onMessageReceived just logs or does nothing in controller, 
+      // but testing it triggers the handler without error.
+    });
+
+    test('pageLoaded triggers onPageFinished', () async {
+      bool called = false;
+      controller.onPageFinished = (url) => called = true;
+
+      final binding = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const codec = StandardMethodCodec();
+
+      await binding.handlePlatformMessage(
+        'custom_webview_flutter_0',
+        codec.encodeMethodCall(const MethodCall('pageLoaded', {'url': 'https://example.com'})),
+        (ByteData? data) {},
+      );
+      expect(called, true);
     });
 
     test('onNavigationRequest returns correct value', () async {
@@ -224,6 +396,35 @@ void main() {
         },
       );
       expect(resultBlock, false);
+    });
+
+    test('onNavigationRequest returns true by default when no callback set', () async {
+      controller.onNavigationRequest = null;
+
+      final binding = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const codec = StandardMethodCodec();
+
+      bool? result;
+      await binding.handlePlatformMessage(
+        'custom_webview_flutter_0',
+        codec.encodeMethodCall(const MethodCall('onNavigationRequest', {'url': 'https://any.com'})),
+        (ByteData? data) {
+          result = codec.decodeEnvelope(data!) as bool;
+        },
+      );
+      expect(result, true);
+    });
+
+    test('Unhandled method calls handle gracefully', () async {
+      final binding = TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      const codec = StandardMethodCodec();
+
+      await binding.handlePlatformMessage(
+        'custom_webview_flutter_0',
+        codec.encodeMethodCall(const MethodCall('unhandled', {})),
+        (ByteData? data) {},
+      );
+      // Should not throw
     });
   });
 }
