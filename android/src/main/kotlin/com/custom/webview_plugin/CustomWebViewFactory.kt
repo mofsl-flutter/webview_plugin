@@ -101,6 +101,8 @@ class WebViewMoFlutter(
                 result.success(null)
             }
             "getCurrentUrl" -> result.success(webViewManager.webView?.url)
+            "canGoBack" -> result.success(webViewManager.webView?.canGoBack() ?: false)
+            "goBack" -> { webViewManager.webView?.goBack(); result.success(null) }
             "setCustomUserAgent" -> {
                 val userAgent = call.argument<String>("userAgent")
                 webViewManager.webView?.settings?.userAgentString = userAgent

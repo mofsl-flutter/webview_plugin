@@ -245,6 +245,28 @@ class CustomWebViewController {
     }
   }
 
+  /// Returns whether the web view can navigate back in history.
+  Future<bool> canGoBack() async {
+    await _idCompleter.future;
+    try {
+      return await _methodChannel.invokeMethod<bool>("canGoBack") ?? false;
+    } on PlatformException catch (e) {
+      debugPrint("Failed to check canGoBack: ${e.message}");
+      return false;
+    }
+  }
+
+  /// Navigates back in the web view's history.
+  Future<void> goBack() async {
+    await _idCompleter.future;
+    try {
+      await _methodChannel.invokeMethod<void>("goBack");
+    } on PlatformException catch (e) {
+      debugPrint("Failed to go back: ${e.message}");
+      rethrow;
+    }
+  }
+
   /// Sets the background color of the web view.
   Future<void> setBackgroundColor(int colorArgb) async {
     await _idCompleter.future;

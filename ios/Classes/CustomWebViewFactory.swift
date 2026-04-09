@@ -114,6 +114,11 @@ class WebViewMoFlutter: NSObject, FlutterPlatformView, WebViewControllerDelegate
             }
         case "getCurrentUrl":
             result(webViewManager.webView?.url?.absoluteString)
+        case "canGoBack":
+            result(webViewManager.webView?.canGoBack ?? false)
+        case "goBack":
+            webViewManager.webView?.goBack()
+            result(nil)
         case "setUserInteractionEnabled":
             if let args = call.arguments as? [String: Any],
                let enabled = args["enabled"] as? Bool {
