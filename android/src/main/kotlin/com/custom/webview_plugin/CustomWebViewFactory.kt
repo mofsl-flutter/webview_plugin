@@ -228,7 +228,7 @@ class WebViewManager private constructor(
                 Log.d("WebPageActivity", "Popup WebView URL: ${request?.url}")
                 val url = request?.url.toString()
                 if (url.endsWith(".pdf") || url.contains("download")) {
-                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
                     return true
                 }
                 return false
@@ -283,15 +283,15 @@ class WebViewManager private constructor(
                 val url = request?.url.toString()
                 when {
                     url.endsWith(".pdf") || url.contains("download") || url.contains("SH=") -> {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
                         return true
                     }
                     url.startsWith("tel:") -> {
-                        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse(url)))
+                        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse(url)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
                         return true
                     }
                     url.startsWith("mailto:") -> {
-                        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse(url)))
+                        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse(url)).apply { addFlags(Intent.FLAG_ACTIVITY_NEW_TASK) })
                         return true
                     }
                 }
