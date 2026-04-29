@@ -373,7 +373,11 @@ class WebViewManager(
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url.toString()
-                if (url.endsWith(".pdf") || url.contains("download")) {
+                val scheme = request?.url?.scheme?.lowercase() ?: ""
+                if (scheme !in setOf("http", "https", "file", "data", "javascript", "about", "chrome")) {
+                    return handleCustomScheme(url, scheme)
+                }
+                if (isPdfUrl(url) || url.contains("download")) {
                     context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
                     return true
                 }
@@ -430,26 +434,26 @@ class WebViewManager(
                 request: WebResourceRequest?
             ): Boolean {
                 val url = request?.url.toString()
+                val scheme = request?.url?.scheme?.lowercase() ?: ""
                 Log.d("CustomWebViewPlugin", "shouldOverrideUrlLoading === $url")
 
+                // Handle all non-web schemes natively BEFORE the Dart round-trip.
+                // Covers upi:, intent:, tel:, mailto:, sms:, market:, whatsapp:, etc.
+                if (scheme !in setOf("http", "https", "file", "data", "javascript", "about", "chrome")) {
+                    return handleCustomScheme(url, scheme)
+                }
+
+                // PDF downloads — open externally
+                if (isPdfUrl(url)) {
+                    context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
+                    return true
+                }
+
+                // For http/https: let Dart decide via onNavigationRequest
                 if (delegate?.onNavigationRequest(url) == false) {
                     return true
                 }
 
-                when {
-                    url.endsWith(".pdf") || url.contains("download") || url.contains("SH=") -> {
-                        context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
-                        return true
-                    }
-                    url.startsWith("tel:") -> {
-                        context.startActivity(Intent(Intent.ACTION_DIAL, Uri.parse(url)))
-                        return true
-                    }
-                    url.startsWith("mailto:") -> {
-                        context.startActivity(Intent(Intent.ACTION_SENDTO, Uri.parse(url)))
-                        return true
-                    }
-                }
                 return false
             }
 
@@ -558,6 +562,38 @@ class WebViewManager(
         }, name)
         configuredJavaScriptChannels.add(name)
         return true
+    }
+
+    private fun isPdfUrl(url: String) = url.lowercase().let {
+        it.endsWith(".pdf") || it.contains(".pdf?") || it.contains("SH=")
+    }
+
+    private fun handleCustomScheme(url: String, scheme: String): Boolean {
+        return try {
+            val intent = if (scheme == "intent") {
+                Intent.parseUri(url, Intent.URI_INTENT_SCHEME)
+            } else {
+                Intent(Intent.ACTION_VIEW, Uri.parse(url))
+            }
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+
+            if (intent.resolveActivity(context.packageManager) != null) {
+                context.startActivity(intent)
+            } else if (scheme == "intent") {
+                val fallbackUrl = intent.getStringExtra("browser_fallback_url")
+                if (!fallbackUrl.isNullOrEmpty()) {
+                    webView?.loadUrl(fallbackUrl)
+                } else {
+                    Log.w("CustomWebViewPlugin", "No app for intent and no fallback: $url")
+                }
+            } else {
+                Log.w("CustomWebViewPlugin", "No app found for scheme '$scheme': $url")
+            }
+            true
+        } catch (e: Exception) {
+            Log.e("CustomWebViewPlugin", "Failed to handle scheme '$scheme': $url", e)
+            true
+        }
     }
 
     fun destroyWebView() {
