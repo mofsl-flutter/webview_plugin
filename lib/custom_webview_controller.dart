@@ -1,19 +1,24 @@
-import 'dart:async';
+import "dart:async";
 
-import 'package:flutter/services.dart';
+import "package:flutter/foundation.dart";
+import "package:flutter/services.dart";
 
+/// Controls a native web view via platform channels.
 class CustomWebViewFlutterController {
-  static const MethodChannel _methodChannel = MethodChannel('custom_webview_flutter');
-  static const EventChannel _eventChannel = EventChannel('custom_webview_plugin_events');
-
-  Stream<String>? _onPageLoadedStream;
+  static const MethodChannel _methodChannel =
+      MethodChannel("custom_webview_flutter");
+  static const EventChannel _eventChannel =
+      EventChannel("custom_webview_plugin_events");
 
   /// Loads a URL in the native web view.
   Future<void> loadUrl(String url) async {
     try {
-      await _methodChannel.invokeMethod('loadUrl', {'initialUrl': url});
+      await _methodChannel.invokeMethod<void>(
+        "loadUrl",
+        <String, dynamic>{"initialUrl": url},
+      );
     } on PlatformException catch (e) {
-      print("Failed to load URL: ${e.message}");
+      debugPrint("Failed to load URL: ${e.message}");
       rethrow;
     }
   }
@@ -21,9 +26,9 @@ class CustomWebViewFlutterController {
   /// Reloads the current URL.
   Future<void> reloadUrl() async {
     try {
-      await _methodChannel.invokeMethod('reloadUrl');
+      await _methodChannel.invokeMethod<void>("reloadUrl");
     } on PlatformException catch (e) {
-      print("Failed to reload URL: ${e.message}");
+      debugPrint("Failed to reload URL: ${e.message}");
       rethrow;
     }
   }
@@ -31,9 +36,9 @@ class CustomWebViewFlutterController {
   /// Resets the web view's cache.
   Future<void> resetCache() async {
     try {
-      await _methodChannel.invokeMethod('resetCache');
+      await _methodChannel.invokeMethod<void>("resetCache");
     } on PlatformException catch (e) {
-      print("Failed to reset cache: ${e.message}");
+      debugPrint("Failed to reset cache: ${e.message}");
       rethrow;
     }
   }
@@ -41,10 +46,13 @@ class CustomWebViewFlutterController {
   /// Executes JavaScript in the native web view.
   Future<dynamic> runJavaScript(String script) async {
     try {
-      final result = await _methodChannel.invokeMethod('runJavaScript', {'script': script});
+      dynamic result = await _methodChannel.invokeMethod<dynamic>(
+        "runJavaScript",
+        <String, dynamic>{"script": script},
+      );
       return result;
     } on PlatformException catch (e) {
-      print("Failed to execute JavaScript: ${e.message}");
+      debugPrint("Failed to execute JavaScript: ${e.message}");
       rethrow;
     }
   }
@@ -52,25 +60,30 @@ class CustomWebViewFlutterController {
   /// Adds a JavaScript channel to the web view.
   Future<void> addJavascriptChannel(String channelName) async {
     try {
-      await _methodChannel.invokeMethod('addJavascriptChannel', {'channelName': channelName});
-      _onMessageReceivedStream ??=
-          _eventChannel.receiveBroadcastStream().map<String>((event) => event.toString());
+      await _methodChannel.invokeMethod<void>(
+        "addJavascriptChannel",
+        <String, dynamic>{"channelName": channelName},
+      );
+      _onMessageReceivedStream ??= _eventChannel
+          .receiveBroadcastStream()
+          .map<String>((Object? event) => "$event");
     } on PlatformException catch (e) {
-      print("Failed to add JavaScript channel: ${e.message}");
+      debugPrint("Failed to add JavaScript channel: ${e.message}");
       rethrow;
     }
   }
 
   Stream<String>? _onMessageReceivedStream;
 
+  /// The stream of messages received from the JavaScript channel.
   Stream<String> get onMessageReceived => _onMessageReceivedStream!;
 
   /// Close the web view (if supported by the native code).
   Future<void> closeWebView() async {
     try {
-      await _methodChannel.invokeMethod('close');
+      await _methodChannel.invokeMethod<void>("close");
     } on PlatformException catch (e) {
-      print("Failed to close web view: ${e.message}");
+      debugPrint("Failed to close web view: ${e.message}");
       rethrow;
     }
   }

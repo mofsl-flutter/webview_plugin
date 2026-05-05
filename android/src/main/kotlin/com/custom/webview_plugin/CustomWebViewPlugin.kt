@@ -54,15 +54,15 @@ class CustomWebViewPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCa
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
-
+        // No cleanup needed for config changes
     }
 
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
-
+        // No reattachment logic needed
     }
 
     override fun onDetachedFromActivity() {
-
+        // No cleanup needed on activity detach
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
@@ -74,72 +74,65 @@ class CustomWebViewPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCa
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "loadUrl" -> {
-                val urlString = call.argument<String>("initialUrl")
-                val javaScriptChannelName = call.argument<String>("javaScriptChannelName")
-                val zoomEnabled = call.argument<Boolean>("zoomEnabled")
-                val enableMultipleWindows = call.argument<Boolean>("enableMultipleWindows")
-                if (urlString != null) {
-                    webViewManager.loadURL(urlString, javaScriptChannelName)
-                    webViewManager.enableZoom(zoomEnabled ?: false)
-                    webViewManager.enableMultipleWindows(enableMultipleWindows ?: false)
-                    result.success(null)
-                } else {
-                    result.error("INVALID_ARGUMENT", "URL is required", null)
-                }
-            }
-
-            "loadHtmlData" -> {
-                val htmlContent = call.argument<String>("htmlString")
-                val javaScriptChannelName = call.argument<String>("javaScriptChannelName")
-                if (htmlContent != null) {
-                    webViewManager.loadHtmlContent(htmlContent, javaScriptChannelName)
-                    result.success(null)
-                } else {
-                    result.error("INVALID_ARGUMENT", "HTML content is required", null)
-                }
-            }
-
-            "runJavaScript" -> {
-                val script = call.argument<String>("script")
-                if (script != null) {
-                    webViewManager.evaluateJavaScript(script) { response, error ->
-                        if (error != null) {
-                            result.error("JAVASCRIPT_ERROR", error.localizedMessage, null)
-                        } else {
-                            result.success(response)
-                        }
-                    }
-                } else {
-                    result.error("INVALID_ARGUMENT", "JavaScript code is required", null)
-                }
-            }
-
-            "reloadUrl" -> {
-                webViewManager.webView?.reload()
-                result.success(null)
-            }
-
-            "resetCache" -> {
-                webViewManager.resetWebViewCache()
-                result.success(null)
-            }
-
-            "addJavascriptChannel" -> {
-                val channelName = call.argument<String>("channelName")
-                if (channelName != null) {
-                    webViewManager.addJavascriptChannel(channelName)
-                    result.success(null)
-                } else {
-                    result.error("INVALID_ARGUMENT", "Channel name is required", null)
-                }
-            }
-
-            "getCurrentUrl" -> {
-                result.success(webViewManager.webView?.url)
-            }
-
+            "loadUrl" -> handleLoadUrl(call, result)
+            "loadHtmlData" -> handleLoadHtmlData(call, result)
+            "runJavaScript" -> handleRunJavaScript(call, result)
+            "reloadUrl" -> { webViewManager.webView?.reload(); result.success(null) }
+            "resetCache" -> { webViewManager.resetWebViewCache(); result.success(null) }
+            "addJavascriptChannel" -> handleAddJavascriptChannel(call, result)
+            "getCurrentUrl" -> result.success(webViewManager.webView?.url)
             else -> result.notImplemented()
+        }
+    }
+
+    private fun handleLoadUrl(call: MethodCall, result: MethodChannel.Result) {
+        val urlString = call.argument<String>("initialUrl")
+        if (urlString != null) {
+            val javaScriptChannelName = call.argument<String>("javaScriptChannelName")
+            val zoomEnabled = call.argument<Boolean>("zoomEnabled")
+            val enableMultipleWindows = call.argument<Boolean>("enableMultipleWindows")
+            webViewManager.loadURL(urlString, javaScriptChannelName)
+            webViewManager.enableZoom(zoomEnabled ?: false)
+            webViewManager.enableMultipleWindows(enableMultipleWindows ?: false)
+            result.success(null)
+        } else {
+            result.error("INVALID_ARGUMENT", "URL is required", null)
+        }
+    }
+
+    private fun handleLoadHtmlData(call: MethodCall, result: MethodChannel.Result) {
+        val htmlContent = call.argument<String>("htmlString")
+        if (htmlContent != null) {
+            val javaScriptChannelName = call.argument<String>("javaScriptChannelName")
+            webViewManager.loadHtmlContent(htmlContent, javaScriptChannelName)
+            result.success(null)
+        } else {
+            result.error("INVALID_ARGUMENT", "HTML content is required", null)
+        }
+    }
+
+    private fun handleRunJavaScript(call: MethodCall, result: MethodChannel.Result) {
+        val script = call.argument<String>("script")
+        if (script != null) {
+            webViewManager.evaluateJavaScript(script) { response, error ->
+                if (error != null) {
+                    result.error("JAVASCRIPT_ERROR", error.localizedMessage, null)
+                } else {
+                    result.success(response)
+                }
+            }
+        } else {
+            result.error("INVALID_ARGUMENT", "JavaScript code is required", null)
+        }
+    }
+
+    private fun handleAddJavascriptChannel(call: MethodCall, result: MethodChannel.Result) {
+        val channelName = call.argument<String>("channelName")
+        if (channelName != null) {
+            webViewManager.addJavascriptChannel(channelName)
+            result.success(null)
+        } else {
+            result.error("INVALID_ARGUMENT", "Channel name is required", null)
         }
     }
 
