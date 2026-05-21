@@ -10,6 +10,8 @@ import android.net.Uri
 import android.net.http.SslError
 import android.os.Build
 import android.os.Environment
+import android.os.Handler
+import android.os.Looper
 import android.os.Message
 import android.util.Base64
 import android.util.Log
@@ -557,7 +559,9 @@ class WebViewManager(
         webView?.addJavascriptInterface(object : Any() {
             @JavascriptInterface
             fun postMessage(message: String) {
-                delegate?.onJavascriptChannelMessageReceived(name, message)
+                Handler(Looper.getMainLooper()).post {
+                    delegate?.onJavascriptChannelMessageReceived(name, message)
+                }
             }
         }, name)
         configuredJavaScriptChannels.add(name)
