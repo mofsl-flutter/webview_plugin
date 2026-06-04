@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.Context
+import android.content.ContextWrapper
 import android.content.Intent
 import android.net.Uri
 import android.net.http.SslError
@@ -264,11 +265,34 @@ class WebViewManager(
     private val configuredJavaScriptChannels: MutableSet<String> = mutableSetOf()
     private var isWebViewPaused: Boolean = false
 
+    // Always anchor to the CURRENT Activity window. The live `context` from Flutter's create()
+    // is the Activity in hybrid composition; unwrap it, then fall back to the plugin's
+    // currently-attached Activity. Never reuse a frozen Activity reference — that is the cause
+    // of the ColorOS/OxygenOS native <select> dropdown `dismissDialog failed` crash, where the
+    // picker AlertDialog stays bound to a stale/recreated window.
+    private fun currentActivityContext(): Context {
+        var c: Context? = context
+        while (c is ContextWrapper) {
+            if (c is Activity) return c
+            c = c.baseContext
+        }
+        return plugin.activeActivity ?: context
+    }
+
     @SuppressLint("SetJavaScriptEnabled")
     fun getOrCreateWebView(): WebView {
         if (webView == null) {
             configuredJavaScriptChannels.clear()
-            webView = WebView(activity ?: context).apply {
+            val webViewContext = currentActivityContext()
+            // TODO(coloros-select-crash): remove after on-device verification on Oppo/Vivo/OnePlus.
+            Log.d(
+                "CustomWebViewPlugin",
+                "WebView ctx=${webViewContext.javaClass.simpleName} " +
+                    "isActivity=${webViewContext is Activity} " +
+                    "activityHash=${(webViewContext as? Activity)?.hashCode()} " +
+                    "pluginActivityHash=${plugin.activeActivity?.hashCode()}"
+            )
+            webView = WebView(webViewContext).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
                 settings.cacheMode = WebSettings.LOAD_DEFAULT
@@ -346,14 +370,14 @@ class WebViewManager(
     }
 
     private fun showPopupWebView(resultMsg: Message?): Boolean {
-        val popupWebView = WebView(activity ?: context).apply {
+        val popupWebView = WebView(currentActivityContext()).apply {
             settings.javaScriptEnabled = true
             settings.javaScriptCanOpenWindowsAutomatically = true
             settings.setSupportMultipleWindows(true)
         }
         popupWebView.webViewClient = createPopupWebViewClient()
         popupWebView.webChromeClient = createPopupWebChromeClient(popupWebView)
-        val dialog = AlertDialog.Builder(activity ?: context).apply {
+        val dialog = AlertDialog.Builder(currentActivityContext()).apply {
             setView(popupWebView)
             setOnDismissListener { popupWebView.destroy() }
         }.setPositiveButton("Close") { dialogInterface, _ ->

@@ -18,6 +18,11 @@ class CustomWebViewPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCa
     private lateinit var methodChannel: MethodChannel
     private var activity: Activity? = null
     private lateinit var context: Context
+
+    // Always-current Activity. Kept fresh by the Activity* lifecycle callbacks below, so the
+    // platform view can resolve the LIVE Activity at WebView/dialog creation time instead of a
+    // value frozen when the factory was first registered.
+    val activeActivity: Activity? get() = activity
     private lateinit var flutterPluginBinding: FlutterPlugin.FlutterPluginBinding
     private var activityPluginBinding: ActivityPluginBinding? = null
 
