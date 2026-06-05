@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
+import android.content.ContentValues
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -14,6 +15,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.Looper
 import android.os.Message
+import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
 import android.view.ViewGroup
@@ -21,6 +23,7 @@ import android.view.WindowManager
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.JsResult
+import android.webkit.MimeTypeMap
 import android.webkit.PermissionRequest
 import android.webkit.SslErrorHandler
 import android.webkit.URLUtil
@@ -31,12 +34,16 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import io.flutter.plugin.common.BinaryMessenger
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import io.flutter.plugin.common.StandardMessageCodec
 import io.flutter.plugin.platform.PlatformView
 import io.flutter.plugin.platform.PlatformViewFactory
+import java.io.File
+import java.io.FileOutputStream
+import java.net.URLDecoder
 
 
 class CustomWebViewFactory(
@@ -300,8 +307,24 @@ class WebViewManager(
                 webChromeClient = createWebChromeClient()
                 webViewClient = createWebViewClient()
             }
+            // Bridge used by downloadBlobUrl() to hand blob contents back to native code.
+            // Must be registered at creation time so it is injected before any page loads.
+            webView!!.addJavascriptInterface(BlobDownloadInterface(), "CustomBlobDownloader")
             webView!!.setDownloadListener { url, userAgent, contentDisposition, mimeType, _ ->
-                enqueueDownload(url, userAgent, contentDisposition, mimeType)
+                // DownloadManager only accepts http/https — anything else (data:, blob:)
+                // throws IllegalArgumentException and crashes the app if unguarded.
+                try {
+                    when {
+                        url.startsWith("data:") -> saveDataUri(url, mimeType)
+                        url.startsWith("blob:") -> downloadBlobUrl(url)
+                        URLUtil.isHttpUrl(url) || URLUtil.isHttpsUrl(url) ->
+                            enqueueDownload(url, userAgent, contentDisposition, mimeType)
+                        else ->
+                            Log.w("CustomWebViewPlugin", "Unsupported download scheme: $url")
+                    }
+                } catch (e: Exception) {
+                    Log.e("CustomWebViewPlugin", "Download failed for $url", e)
+                }
             }
         }
         return webView!!
@@ -524,6 +547,106 @@ class WebViewManager(
         )
         val dm = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
         dm.enqueue(request)
+    }
+
+    /**
+     * Saves a `data:` URI (e.g. `data:image/png;base64,...`) to the public Downloads
+     * folder. DownloadManager cannot handle these, so we decode and write them ourselves.
+     */
+    private fun saveDataUri(dataUri: String, fallbackMimeType: String) {
+        val commaIndex = dataUri.indexOf(',')
+        if (commaIndex < 0) {
+            Log.w("CustomWebViewPlugin", "Malformed data URI, no payload found")
+            return
+        }
+        val header = dataUri.substring(0, commaIndex) // data:[<mediatype>][;base64]
+        val payload = dataUri.substring(commaIndex + 1)
+
+        val mimeType = header.removePrefix("data:")
+            .substringBefore(';')
+            .ifBlank { fallbackMimeType.ifBlank { "application/octet-stream" } }
+
+        val bytes = if (header.contains(";base64")) {
+            Base64.decode(payload, Base64.DEFAULT)
+        } else {
+            URLDecoder.decode(payload, "UTF-8").toByteArray()
+        }
+
+        saveBytesToDownloads(bytes, buildDownloadFileName(mimeType), mimeType)
+    }
+
+    /**
+     * `blob:` URLs are only resolvable inside the page's JS context, so fetch the blob
+     * via injected JavaScript and pipe its base64 contents back through the
+     * CustomBlobDownloader JavascriptInterface.
+     */
+    private fun downloadBlobUrl(blobUrl: String) {
+        val script = """
+            (function() {
+                fetch('$blobUrl')
+                    .then(function(response) { return response.blob(); })
+                    .then(function(blob) {
+                        var reader = new FileReader();
+                        reader.onloadend = function() {
+                            CustomBlobDownloader.onBlobData(
+                                reader.result.split(',')[1], blob.type || '');
+                        };
+                        reader.readAsDataURL(blob);
+                    })
+                    .catch(function(e) {
+                        console.error('Blob download failed: ' + e);
+                    });
+            })();
+        """.trimIndent()
+        webView?.evaluateJavascript(script, null)
+    }
+
+    inner class BlobDownloadInterface {
+        // Invoked on a WebView JNI background thread, so file I/O is safe here.
+        @JavascriptInterface
+        fun onBlobData(base64Data: String, mimeType: String) {
+            try {
+                val bytes = Base64.decode(base64Data, Base64.DEFAULT)
+                val mime = mimeType.ifBlank { "application/octet-stream" }
+                saveBytesToDownloads(bytes, buildDownloadFileName(mime), mime)
+            } catch (e: Exception) {
+                Log.e("CustomWebViewPlugin", "Blob download failed", e)
+            }
+        }
+    }
+
+    private fun buildDownloadFileName(mimeType: String): String {
+        val extension = MimeTypeMap.getSingleton().getExtensionFromMimeType(mimeType) ?: "bin"
+        return "download_${System.currentTimeMillis()}.$extension"
+    }
+
+    private fun saveBytesToDownloads(bytes: ByteArray, fileName: String, mimeType: String) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            val resolver = context.contentResolver
+            val values = ContentValues().apply {
+                put(MediaStore.Downloads.DISPLAY_NAME, fileName)
+                put(MediaStore.Downloads.MIME_TYPE, mimeType)
+                put(MediaStore.Downloads.IS_PENDING, 1)
+            }
+            val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
+            if (uri == null) {
+                Log.e("CustomWebViewPlugin", "Failed to create MediaStore entry for $fileName")
+                return
+            }
+            resolver.openOutputStream(uri)?.use { it.write(bytes) }
+            values.clear()
+            values.put(MediaStore.Downloads.IS_PENDING, 0)
+            resolver.update(uri, values, null, null)
+        } else {
+            val downloadsDir =
+                Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
+            if (!downloadsDir.exists()) downloadsDir.mkdirs()
+            FileOutputStream(File(downloadsDir, fileName)).use { it.write(bytes) }
+        }
+        Log.d("CustomWebViewPlugin", "Saved download $fileName ($mimeType, ${bytes.size} bytes)")
+        Handler(Looper.getMainLooper()).post {
+            Toast.makeText(context, "Downloaded $fileName", Toast.LENGTH_SHORT).show()
+        }
     }
 
     fun loadHtmlContent(htmlContent: String, javaScriptChannelNames: List<String>, baseURL: String? = null) {
