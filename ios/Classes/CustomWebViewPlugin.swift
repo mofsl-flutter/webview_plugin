@@ -50,6 +50,13 @@ public protocol WebViewControllerDelegate: AnyObject {
 }
 
 class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMessageHandler {
+    // Dedicated bridge for blob downloads — kept out of configuredJavaScriptChannels
+    // so its payloads are never forwarded to Dart.
+    private static let blobDownloaderChannelName = "CustomBlobDownloader"
+    // Standard download bridge that web apps probe for via
+    // window.webkit.messageHandlers.downloadHandler (e.g. MF Central CAS QR flow).
+    private static let downloadHandlerChannelName = "downloadHandler"
+
     var webView: WKWebView!
     weak var delegate: WebViewControllerDelegate?
     private var configuredJavaScriptChannels: Set<String> = []
@@ -67,7 +74,9 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         webView.uiDelegate = self
         webView.navigationDelegate = self
         _ = addJavascriptChannel(name: "ChartAppDelegate")
-        
+        webView.configuration.userContentController.add(self, name: Self.blobDownloaderChannelName)
+        webView.configuration.userContentController.add(self, name: Self.downloadHandlerChannelName)
+
         setupProgressObserver()
     }
 
@@ -80,6 +89,8 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
     deinit {
         progressObserver?.invalidate()
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.blobDownloaderChannelName)
+        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.downloadHandlerChannelName)
     }
 
     func loadURL(_ urlString: String, _ isFromChart: Bool, withJavaScriptChannels channelNames: [String], zoomEnabled: Bool, headers: [String: String]? = nil) {
@@ -210,7 +221,17 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         print("Message received: \(message.name)")
-        
+
+        if message.name == Self.blobDownloaderChannelName {
+            handleBlobDownloadMessage(message.body)
+            return
+        }
+
+        if message.name == Self.downloadHandlerChannelName {
+            handleDownloadHandlerMessage(message.body)
+            return
+        }
+
         var messageString = ""
         if let body = message.body as? String {
             messageString = body
@@ -228,7 +249,23 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
         if let url = navigationAction.request.url {
-            
+            // blob:/data: URLs are downloads, not navigations — WKWebView cannot load
+            // them as pages (navigation would fail and surface "download failed").
+            let scheme = url.scheme?.lowercased()
+            NSLog("%@", "[CustomWebView] navigation request (\(scheme ?? "nil")): \(url.absoluteString.prefix(200))")
+            if scheme == "blob" {
+                NSLog("%@", "[BlobDownload] intercepted blob URL, injecting fetch script")
+                decisionHandler(.cancel)
+                downloadBlobUrl(url.absoluteString)
+                return
+            }
+            if scheme == "data" {
+                NSLog("%@", "[BlobDownload] intercepted data URL, decoding natively")
+                decisionHandler(.cancel)
+                saveDataUrl(url)
+                return
+            }
+
             // Allow blocking from Dart
             delegate?.onNavigationRequest(url: url.absoluteString) { allow in
                 if !allow {
@@ -260,6 +297,20 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
         guard let url = navigationAction.request.url else { return nil }
+
+        // window.open on a blob/data URL is a download, not a popup — a popup
+        // webview cannot load a blob URL (silent no-op), so download instead.
+        let scheme = url.scheme?.lowercased()
+        if scheme == "blob" {
+            NSLog("%@", "[BlobDownload] intercepted blob URL from window.open")
+            downloadBlobUrl(url.absoluteString)
+            return nil
+        }
+        if scheme == "data" {
+            NSLog("%@", "[BlobDownload] intercepted data URL from window.open")
+            saveDataUrl(url)
+            return nil
+        }
 
         let newWebView = WKWebView(frame: .zero, configuration: configuration)
         newWebView.uiDelegate = self
@@ -309,6 +360,203 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         } else {
             // Fallback for older iOS if needed, but for now we target modern
             completionHandler(nil)
+        }
+    }
+
+    // MARK: - Blob / data URL downloads
+
+    private func downloadBlobUrl(_ blobUrl: String) {
+        // Embed the URL as a JSON string literal so a hostile blob URL cannot
+        // break out of the injected script.
+        guard let urlData = try? JSONSerialization.data(withJSONObject: [blobUrl]),
+              let jsonArray = String(data: urlData, encoding: .utf8) else {
+            delegate?.onReceivedError(message: "Blob download failed: could not encode URL")
+            return
+        }
+        let script = """
+        (function() {
+            var blobUrl = \(jsonArray)[0];
+            function report(payload) {
+                window.webkit.messageHandlers.\(Self.blobDownloaderChannelName).postMessage(payload);
+            }
+            fetch(blobUrl)
+                .then(function(response) {
+                    if (!response.ok) { throw new Error('HTTP ' + response.status); }
+                    return response.blob();
+                })
+                .then(function(blob) {
+                    var reader = new FileReader();
+                    reader.onloadend = function() {
+                        var base64 = (reader.result || '').split(',')[1] || '';
+                        report({ base64: base64, mimeType: blob.type || '' });
+                    };
+                    reader.onerror = function() {
+                        report({ error: 'Blob download failed: FileReader could not read blob' });
+                    };
+                    reader.readAsDataURL(blob);
+                })
+                .catch(function(e) { report({ error: 'Blob fetch failed: ' + e.message }); });
+        })();
+        """
+        webView.evaluateJavaScript(script) { [weak self] _, error in
+            if let error = error {
+                NSLog("%@", "[BlobDownload] fetch script injection FAILED: \(error)")
+                self?.delegate?.onReceivedError(message: "Blob download failed: \(error.localizedDescription)")
+            } else {
+                NSLog("%@", "[BlobDownload] fetch script injected, waiting for blob data")
+            }
+        }
+    }
+
+    private func handleBlobDownloadMessage(_ body: Any) {
+        guard let dict = body as? [String: Any] else {
+            NSLog("%@", "[BlobDownload] unexpected message body: \(type(of: body))")
+            delegate?.onReceivedError(message: "Blob download failed: unexpected message format")
+            return
+        }
+        if let jsError = dict["error"] as? String {
+            NSLog("%@", "[BlobDownload] JS reported error: \(jsError)")
+            delegate?.onReceivedError(message: jsError)
+            return
+        }
+        guard let base64 = dict["base64"] as? String, !base64.isEmpty else {
+            NSLog("%@", "[BlobDownload] empty base64 payload")
+            delegate?.onReceivedError(message: "Blob download failed: empty payload")
+            return
+        }
+        NSLog("%@", "[BlobDownload] received blob data: \(base64.count) base64 chars, mime=\(dict["mimeType"] ?? "?")")
+        let mimeType = (dict["mimeType"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "application/octet-stream"
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
+                DispatchQueue.main.async {
+                    self?.delegate?.onReceivedError(message: "Blob download failed: invalid base64 data")
+                }
+                return
+            }
+            self?.saveAndPresentDownload(data: data, mimeType: mimeType)
+        }
+    }
+
+    // Handles download requests posted by web pages that detect the native
+    // bridge (window.webkit.messageHandlers.downloadHandler). Expected shape:
+    // { type: "mfc-cas-download", data: { base64: "...", filename: "x.png" } }
+    // but a flat { base64, filename } payload is accepted too.
+    private func handleDownloadHandlerMessage(_ body: Any) {
+        guard let dict = body as? [String: Any] else {
+            NSLog("%@", "[BlobDownload] downloadHandler: unexpected payload type \(type(of: body))")
+            delegate?.onReceivedError(message: "Download failed: unexpected downloadHandler payload")
+            return
+        }
+        let payload = dict["data"] as? [String: Any] ?? dict
+        guard let base64 = payload["base64"] as? String, !base64.isEmpty else {
+            NSLog("%@", "[BlobDownload] downloadHandler: no base64 in payload, keys=\(Array(dict.keys))")
+            delegate?.onReceivedError(message: "Download failed: downloadHandler payload has no base64 data")
+            return
+        }
+        let fileName = (payload["filename"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+        NSLog("%@", "[BlobDownload] downloadHandler: received \(base64.count) base64 chars, filename=\(fileName ?? "nil")")
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            // Accept both a plain base64 string and a full data URI.
+            var raw = base64
+            if let commaIndex = raw.firstIndex(of: ","), raw.lowercased().hasPrefix("data:") {
+                raw = String(raw[raw.index(after: commaIndex)...])
+            }
+            guard let bytes = Data(base64Encoded: raw, options: .ignoreUnknownCharacters) else {
+                DispatchQueue.main.async {
+                    self?.delegate?.onReceivedError(message: "Download failed: invalid base64 in downloadHandler payload")
+                }
+                return
+            }
+            self?.saveAndPresentDownload(data: bytes, mimeType: "application/octet-stream", suggestedName: fileName)
+        }
+    }
+
+    private func saveDataUrl(_ url: URL) {
+        let urlString = url.absoluteString
+        guard let commaIndex = urlString.firstIndex(of: ",") else {
+            delegate?.onReceivedError(message: "Download failed: malformed data URL")
+            return
+        }
+        let header = String(urlString[..<commaIndex])  // data:[<mediatype>][;base64]
+        let payload = String(urlString[urlString.index(after: commaIndex)...])
+        let mimeType = header.dropFirst("data:".count)
+            .split(separator: ";").first.map(String.init)
+            .flatMap { $0.isEmpty ? nil : $0 } ?? "application/octet-stream"
+
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let data: Data?
+            if header.lowercased().contains(";base64") {
+                let raw = payload.removingPercentEncoding ?? payload
+                data = Data(base64Encoded: raw, options: .ignoreUnknownCharacters)
+            } else {
+                data = (payload.removingPercentEncoding ?? payload).data(using: .utf8)
+            }
+            guard let bytes = data else {
+                DispatchQueue.main.async {
+                    self?.delegate?.onReceivedError(message: "Download failed: could not decode data URL")
+                }
+                return
+            }
+            self?.saveAndPresentDownload(data: bytes, mimeType: mimeType)
+        }
+    }
+
+    private func suggestedFileName(forMimeType mimeType: String) -> String {
+        let timestamp = Int(Date().timeIntervalSince1970 * 1000)
+        var ext = "bin"
+        if #available(iOS 14.0, *),
+           let utType = UTType(mimeType: mimeType),
+           let preferred = utType.preferredFilenameExtension {
+            ext = preferred
+        } else {
+            let fallback: [String: String] = [
+                "application/pdf": "pdf", "image/png": "png", "image/jpeg": "jpg",
+                "text/csv": "csv", "text/plain": "txt", "application/zip": "zip",
+                "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+            ]
+            ext = fallback[mimeType.lowercased()] ?? "bin"
+        }
+        return "download_\(timestamp).\(ext)"
+    }
+
+    private func saveAndPresentDownload(data: Data, mimeType: String, suggestedName: String? = nil) {
+        let fileName = suggestedName ?? suggestedFileName(forMimeType: mimeType)
+        let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
+        do {
+            try data.write(to: tempURL, options: .atomic)
+            NSLog("%@", "[BlobDownload] wrote \(data.count) bytes to \(tempURL.path)")
+        } catch {
+            DispatchQueue.main.async { [weak self] in
+                self?.delegate?.onReceivedError(message: "Download failed: could not write file (\(error.localizedDescription))")
+            }
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            self?.presentDownloadedFile(at: tempURL)
+        }
+    }
+
+    private func presentDownloadedFile(at fileURL: URL) {
+        NSLog("%@", "[BlobDownload] presenting save dialog for \(fileURL.lastPathComponent)")
+        guard let rootVC = UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            NSLog("%@", "[BlobDownload] no key window / root view controller found")
+            delegate?.onReceivedError(message: "Download failed: no view controller to present from")
+            return
+        }
+        var topVC = rootVC
+        while let presented = topVC.presentedViewController { topVC = presented }
+
+        if #available(iOS 14.0, *) {
+            // asCopy keeps the temp file valid; user cancel is a valid outcome.
+            let picker = UIDocumentPickerViewController(forExporting: [fileURL], asCopy: true)
+            topVC.present(picker, animated: true)
+        } else {
+            let activityVC = UIActivityViewController(activityItems: [fileURL], applicationActivities: nil)
+            // iPad requires a popover anchor.
+            activityVC.popoverPresentationController?.sourceView = webView
+            activityVC.popoverPresentationController?.sourceRect = CGRect(
+                x: webView.bounds.midX, y: webView.bounds.midY, width: 1, height: 1)
+            topVC.present(activityVC, animated: true)
         }
     }
 }
