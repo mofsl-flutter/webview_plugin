@@ -522,7 +522,12 @@ class WebViewManager(
             }
 
             override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
-                handler?.proceed()
+                // Never proceed on an SSL error — doing so bypasses certificate
+                // validation and exposes the WebView to man-in-the-middle attacks
+                // (Google Play "Unsafe Implementation of WebView SSL Error Handler").
+                // Cancel the load and surface the failure to Dart.
+                handler?.cancel()
+                delegate?.onReceivedError("SSL certificate error: ${error?.primaryError}")
             }
         }
     }

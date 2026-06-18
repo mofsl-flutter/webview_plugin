@@ -326,13 +326,11 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         didReceive challenge: URLAuthenticationChallenge,
         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let serverTrust = challenge.protectionSpace.serverTrust else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-        // Trust the certificate — supports self-signed / internal CA certificates.
-        completionHandler(.useCredential, URLCredential(trust: serverTrust))
+        // Let the system perform standard certificate-chain validation. We must
+        // never blindly trust the server certificate — building a URLCredential
+        // from an unevaluated serverTrust bypasses TLS validation and exposes the
+        // WebView to man-in-the-middle attacks.
+        completionHandler(.performDefaultHandling, nil)
     }
 
     @available(iOS 18.4, *)
