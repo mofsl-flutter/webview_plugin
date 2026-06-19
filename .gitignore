@@ -10,21 +10,46 @@
 .svn/
 migrate_working_dir/
 
-# IntelliJ related
+# IntelliJ / Android Studio
 *.iml
 *.ipr
 *.iws
 .idea/
 
-# The .vscode folder contains launch configuration and tasks you configure in
-# VS Code which you may wish to be included in version control, so this line
-# is commented out by default.
-#.vscode/
+# VS Code
+.vscode/
 
-# Flutter/Dart/Pub related
-# Libraries should not include pubspec.lock, per https://dart.dev/guides/libraries/private-files#pubspeclock.
+# Flutter metadata (generated)
+.metadata
+
+# Flutter/Dart/Pub
+# Libraries should not include pubspec.lock per https://dart.dev/guides/libraries/private-files#pubspeclock
 /pubspec.lock
 **/doc/api/
 .dart_tool/
 build/
+
+# Android build cache
+android/.gradle/
+
+# SonarQube
 .scannerwork/
+
+# Coverage
+coverage/
+*.lcov
+
+# Graphify (keep report artifacts, exclude cache/runtime files)
+graphify-out/cache/
+graphify-out/graph.json
+graphify-out/cost.json
+graphify-out/manifest.json
+graphify-out/.graphify_python
+graphify-out/.graphify_*.json
+
+# AI agent / local tooling (Claude Code, Gemini CLI)
+.claude/
+.gemini/
+skills/
+*.skill
+SKILL_PLAN_*.md

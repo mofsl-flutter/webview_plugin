@@ -3,28 +3,30 @@ package com.custom.webview_plugin
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.os.Handler
-import android.os.Looper
+import android.net.Uri
 import android.util.Log
+import android.webkit.ValueCallback
 import io.flutter.embedding.engine.plugins.FlutterPlugin
 import io.flutter.embedding.engine.plugins.activity.ActivityAware
 import io.flutter.embedding.engine.plugins.activity.ActivityPluginBinding
-import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 
 
-class CustomWebViewPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandler,
-    EventChannel.StreamHandler, WebViewControllerDelegate {
+class CustomWebViewPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCallHandler {
 
     private lateinit var methodChannel: MethodChannel
-    private lateinit var eventChannel: EventChannel
-    private var eventSink: EventChannel.EventSink? = null
-    private lateinit var webViewManager: WebViewManager
     private var activity: Activity? = null
     private lateinit var context: Context
-    private val uiThreadHandler: Handler = Handler(Looper.getMainLooper())
+
+    // Always-current Activity. Kept fresh by the Activity* lifecycle callbacks below, so the
+    // platform view can resolve the LIVE Activity at WebView/dialog creation time instead of a
+    // value frozen when the factory was first registered.
+    val activeActivity: Activity? get() = activity
     private lateinit var flutterPluginBinding: FlutterPlugin.FlutterPluginBinding
+    private var activityPluginBinding: ActivityPluginBinding? = null
+
+    internal var fileChooserCallback: ValueCallback<Array<Uri>>? = null
 
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         this.flutterPluginBinding = flutterPluginBinding
@@ -34,165 +36,81 @@ class CustomWebViewPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCa
             MethodChannel(flutterPluginBinding.binaryMessenger, "custom_webview_flutter").apply {
                 setMethodCallHandler(this@CustomWebViewPlugin)
             }
-        eventChannel = EventChannel(
-            flutterPluginBinding.binaryMessenger,
-            "custom_webview_plugin_events"
-        ).apply {
-            setStreamHandler(this@CustomWebViewPlugin)
-        }
-
     }
-
 
     override fun onAttachedToActivity(binding: ActivityPluginBinding) {
         activity = binding.activity
-        webViewManager = WebViewManager.getInstance(context, activity)
+        activityPluginBinding = binding
+
+        // Register the activity result listener here — before the Activity reaches STARTED.
+        // This avoids the IllegalStateException caused by registerForActivityResult being
+        // called in a platform view constructor (which fires when Activity is already RESUMED).
+        binding.addActivityResultListener { requestCode, resultCode, data ->
+            if (requestCode == FILECHOOSER_RESULTCODE) {
+                val cb = fileChooserCallback
+                fileChooserCallback = null
+                if (resultCode == Activity.RESULT_OK) {
+                    val results = data?.data?.let { arrayOf(it) }
+                    cb?.onReceiveValue(results)
+                } else {
+                    cb?.onReceiveValue(null)
+                }
+                true
+            } else {
+                false
+            }
+        }
+
         flutterPluginBinding.platformViewRegistry.registerViewFactory(
             "custom_webview_flutter",
-            CustomWebViewFactory(flutterPluginBinding.binaryMessenger, this, webViewManager)
+            CustomWebViewFactory(flutterPluginBinding.binaryMessenger, activity, this)
         )
     }
 
     override fun onDetachedFromActivityForConfigChanges() {
-        // No cleanup needed for config changes
+        activity = null
     }
 
     override fun onReattachedToActivityForConfigChanges(binding: ActivityPluginBinding) {
-        // No reattachment logic needed
+        activity = binding.activity
+        activityPluginBinding = binding
     }
 
     override fun onDetachedFromActivity() {
-        // No cleanup needed on activity detach
+        fileChooserCallback = null
+        activityPluginBinding = null
+        activity = null
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         Log.d("CustomWebViewPlugin", "onDetachedFromEngine")
         methodChannel.setMethodCallHandler(null)
-        eventChannel.setStreamHandler(null)
-        webViewManager.destroyWebView()
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
         when (call.method) {
-            "loadUrl" -> handleLoadUrl(call, result)
-            "loadHtmlData" -> handleLoadHtmlData(call, result)
-            "runJavaScript" -> handleRunJavaScript(call, result)
-            "reloadUrl" -> { webViewManager.webView?.reload(); result.success(null) }
-            "resetCache" -> { webViewManager.resetWebViewCache(); result.success(null) }
-            "addJavascriptChannel" -> handleAddJavascriptChannel(call, result)
-            "getCurrentUrl" -> result.success(webViewManager.webView?.url)
+            "resetCache" -> {
+                android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                android.webkit.WebStorage.getInstance().deleteAllData()
+                result.success(null)
+            }
+            "clearCookies" -> {
+                android.webkit.CookieManager.getInstance().removeAllCookies(null)
+                result.success(null)
+            }
             else -> result.notImplemented()
         }
     }
 
-    private fun handleLoadUrl(call: MethodCall, result: MethodChannel.Result) {
-        val urlString = call.argument<String>("initialUrl")
-        if (urlString != null) {
-            val javaScriptChannelName = call.argument<String>("javaScriptChannelName")
-            val zoomEnabled = call.argument<Boolean>("zoomEnabled")
-            val enableMultipleWindows = call.argument<Boolean>("enableMultipleWindows")
-            webViewManager.loadURL(urlString, javaScriptChannelName)
-            webViewManager.enableZoom(zoomEnabled ?: false)
-            webViewManager.enableMultipleWindows(enableMultipleWindows ?: false)
-            result.success(null)
-        } else {
-            result.error("INVALID_ARGUMENT", "URL is required", null)
+    @Suppress("DEPRECATION")
+    internal fun launchFileChooser() {
+        val intent = Intent(Intent.ACTION_GET_CONTENT).apply {
+            addCategory(Intent.CATEGORY_OPENABLE)
+            type = "*/*"
         }
+        activity?.startActivityForResult(
+            Intent.createChooser(intent, "Choose a file"),
+            FILECHOOSER_RESULTCODE
+        )
     }
-
-    private fun handleLoadHtmlData(call: MethodCall, result: MethodChannel.Result) {
-        val htmlContent = call.argument<String>("htmlString")
-        if (htmlContent != null) {
-            val javaScriptChannelName = call.argument<String>("javaScriptChannelName")
-            webViewManager.loadHtmlContent(htmlContent, javaScriptChannelName)
-            result.success(null)
-        } else {
-            result.error("INVALID_ARGUMENT", "HTML content is required", null)
-        }
-    }
-
-    private fun handleRunJavaScript(call: MethodCall, result: MethodChannel.Result) {
-        val script = call.argument<String>("script")
-        if (script != null) {
-            webViewManager.evaluateJavaScript(script) { response, error ->
-                if (error != null) {
-                    result.error("JAVASCRIPT_ERROR", error.localizedMessage, null)
-                } else {
-                    result.success(response)
-                }
-            }
-        } else {
-            result.error("INVALID_ARGUMENT", "JavaScript code is required", null)
-        }
-    }
-
-    private fun handleAddJavascriptChannel(call: MethodCall, result: MethodChannel.Result) {
-        val channelName = call.argument<String>("channelName")
-        if (channelName != null) {
-            webViewManager.addJavascriptChannel(channelName)
-            result.success(null)
-        } else {
-            result.error("INVALID_ARGUMENT", "Channel name is required", null)
-        }
-    }
-
-    override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {
-        eventSink = events
-        webViewManager.delegate = this
-    }
-
-    override fun onCancel(arguments: Any?) {
-        Log.d("CustomWebViewPlugin", "onCancel")
-
-        eventSink = null
-        webViewManager.delegate = null
-    }
-
-    override fun pageDidLoad() {
-        eventSink?.success("pageLoaded")
-    }
-
-    override fun onMessageReceived(message: String) {
-        uiThreadHandler.post {
-            eventSink?.success(message)
-        }
-    }
-
-    override fun onJavascriptChannelMessageReceived(channelName: String, message: String) {
-        uiThreadHandler.post {
-            eventSink?.success(
-                mapOf(
-                    "event" to "javascriptChannelMessageReceived",
-                    "channelName" to channelName,
-                    "message" to message
-                )
-            )
-        }
-    }
-
-    override fun onNavigationRequest(url: String) {
-        uiThreadHandler.post {
-            eventSink?.success(mapOf("event" to "navigationRequest", "url" to url))
-        }
-    }
-
-    override fun onPageFinished(url: String) {
-        uiThreadHandler.post {
-            eventSink?.success(mapOf("event" to "pageFinished", "url" to url))
-        }
-    }
-
-    override fun onReceivedError(message: String) {
-        uiThreadHandler.post {
-            eventSink?.success(mapOf("event" to "error", "message" to message))
-        }
-    }
-
-    override fun onJsAlert(url: String?, message: String?) {
-        uiThreadHandler.post {
-            eventSink?.success(mapOf("event" to "onJsAlert", "url" to url, "message" to message))
-        }
-    }
-
-
 }

@@ -1,85 +1,16 @@
 import "package:flutter/foundation.dart";
+import "package:flutter/gestures.dart";
+import "package:flutter/rendering.dart";
 import "package:flutter/services.dart";
+import "package:flutter/widgets.dart";
 
-/// Plugin for controlling a native WebView.
+import "custom_webview_controller.dart";
+
+/// Global plugin class for non-instance specific actions.
 class CustomWebViewPlugin {
   static const MethodChannel _channel = MethodChannel("custom_webview_flutter");
-  static const EventChannel _eventChannel =
-      EventChannel("custom_webview_plugin_events");
 
-  // Method to open the WebView in iOS
-
-  // Stream<String>? _onPageLoadedStream;
-
-  // ignore: use_late_for_private_fields_and_variables, field is nullable until a channel is registered
-  static Stream<String>? _onMessageReceivedStream;
-
-  /// The stream of messages received from the JavaScript channel.
-  Stream<String> get onMessageReceived => _onMessageReceivedStream!;
-
-  /// Opens the WebView and loads the given [url].
-  static Future<void> openWebView(
-    String url, {
-    String? javascriptChannelName,
-    bool? isChart,
-    bool? isZoomEnabled,
-    bool? enableMultipleWindows,
-  }) async {
-    try {
-      await _channel.invokeMethod<void>("loadUrl", <String, dynamic>{
-        "initialUrl": url,
-        "javaScriptChannelName": javascriptChannelName,
-        "isChart": isChart,
-        "zoomEnabled": isZoomEnabled,
-        "enableMultipleWindows": enableMultipleWindows,
-      });
-    } on PlatformException catch (e) {
-      debugPrint("Failed to open WebView: '${e.message}'.");
-    }
-  }
-
-  /// Loads raw HTML data into the WebView.
-  static Future<void> loadHtmlData(
-    String htmlString, {
-    String? baseURL,
-    String? javaScriptChannelName,
-  }) async {
-    try {
-      await _channel.invokeMethod<void>("loadHtmlData", <String, dynamic>{
-        "htmlString": htmlString,
-        "baseURL": baseURL,
-        "javaScriptChannelName": javaScriptChannelName,
-      });
-    } on Exception catch (e) {
-      debugPrint("Failed to load HTML data: $e");
-    }
-  }
-
-  /// Adds a JavaScript channel to the WebView.
-  static Future<void> addJavascriptChannel(String channelName) async {
-    try {
-      debugPrint("addJavascriptChannel  $channelName");
-      await _channel.invokeMethod<void>(
-        "addJavascriptChannel",
-        <String, dynamic>{"channelName": channelName},
-      );
-    } on PlatformException catch (e) {
-      debugPrint("Failed to add JavaScript channel: ${e.message}");
-      rethrow;
-    }
-  }
-
-  /// Reloads the current URL.
-  static Future<void> reloadUrl() async {
-    try {
-      await _channel.invokeMethod<void>("reloadUrl");
-    } on PlatformException catch (e) {
-      debugPrint("Failed to reload URL: ${e.message}");
-      rethrow;
-    }
-  }
-
-  /// Resets the web view's cache.
+  /// Resets the web view's cache globally.
   static Future<void> resetCache() async {
     try {
       await _channel.invokeMethod<void>("resetCache");
@@ -88,74 +19,99 @@ class CustomWebViewPlugin {
       rethrow;
     }
   }
+}
 
-  // Method to authenticate the webviewSession in iOS
+/// A widget that displays a native web view.
+class CustomWebViewWidget extends StatefulWidget {
+  /// Creates a [CustomWebViewWidget].
+  const CustomWebViewWidget({
+    required this.controller,
+    super.key,
+    this.initialUrl,
+    this.initialHeaders,
+    this.javascriptChannelNames,
+    this.isChart = true,
+    this.zoomEnabled = true,
+    this.enableMultipleWindows = true,
+  });
 
-  /// Runs JavaScript code in the WebView.
-  static Future<void> runJavaScript(String script) async {
-    try {
-      await _channel.invokeMethod<void>(
-        "runJavaScript",
-        <String, dynamic>{"script": script},
+  /// The controller that manages this web view.
+  final CustomWebViewController controller;
+
+  /// The initial URL to load.
+  final String? initialUrl;
+
+  /// The initial headers to send with the initial URL.
+  final Map<String, String>? initialHeaders;
+
+  /// The names of the initial JavaScript channels to add.
+  final List<String>? javascriptChannelNames;
+
+  /// Whether the web view is being used for a chart.
+  final bool isChart;
+
+  /// Whether zoom is enabled.
+  final bool zoomEnabled;
+
+  /// Whether multiple windows support is enabled.
+  final bool enableMultipleWindows;
+
+  @override
+  State<CustomWebViewWidget> createState() => _CustomWebViewWidgetState();
+}
+
+class _CustomWebViewWidgetState extends State<CustomWebViewWidget> {
+  @override
+  Widget build(BuildContext context) {
+    const String viewType = "custom_webview_flutter";
+    final Map<String, dynamic> creationParams = <String, dynamic>{
+      "initialUrl": widget.initialUrl,
+      "headers": widget.initialHeaders,
+      "javaScriptChannelNames": widget.javascriptChannelNames,
+      "isChart": widget.isChart,
+      "zoomEnabled": widget.zoomEnabled,
+      "enableMultipleWindows": widget.enableMultipleWindows,
+    };
+
+    if (defaultTargetPlatform == TargetPlatform.android) {
+      return PlatformViewLink(
+        viewType: viewType,
+        surfaceFactory: (context, controller) {
+          return AndroidViewSurface(
+            controller: controller as AndroidViewController,
+            gestureRecognizers: const <Factory<OneSequenceGestureRecognizer>>{},
+            hitTestBehavior: PlatformViewHitTestBehavior.opaque,
+          );
+        },
+        onCreatePlatformView: (params) {
+          return PlatformViewsService.initSurfaceAndroidView(
+            id: params.id,
+            viewType: viewType,
+            layoutDirection: TextDirection.ltr,
+            creationParams: creationParams,
+            creationParamsCodec: const StandardMessageCodec(),
+            onFocus: () {
+              params.onFocusChanged(true);
+            },
+          )
+            ..addOnPlatformViewCreatedListener(params.onPlatformViewCreated)
+            ..addOnPlatformViewCreatedListener((int id) {
+              widget.controller.setViewId(id);
+            })
+            ..create();
+        },
       );
-    } on PlatformException catch (e) {
-      debugPrint("Failed to run JavaScript: '${e.message}'.");
-    }
-  }
-
-  /// Enables multiple windows support in the WebView.
-  static Future<void> enableMultipleWindows() async {
-    try {
-      await _channel.invokeMethod<void>("enableMultipleWindows");
-    } on PlatformException catch (e) {
-      debugPrint("Failed to renableMultipleWindows: '${e.message}'.");
-    }
-  }
-
-  // Stream<String> get onPageLoaded {
-  //   _onPageLoadedStream ??= _eventChannel
-  //       .receiveBroadcastStream()
-  //       .map<String>((event) => event as String);
-  //   return _onPageLoadedStream!;
-  // }
-
-  /// Returns the currently loaded URL.
-  static Future<String> getCurrentLoadedUrl() async {
-    try {
-      return await _channel.invokeMethod("getCurrentUrl");
-    } on PlatformException catch (e) {
-      debugPrint("Failed to get current URL: '${e.message}'.");
-      rethrow;
-    }
-  }
-
-  /// Registers a callback to receive events from the JavaScript channel stream.
-  static void getJavaScriptChannelStream(
-    void Function(dynamic) callback,
-  ) {
-    _eventChannel.receiveBroadcastStream().listen(callback);
-  }
-
-  /// Registers a callback to be called when the WebView finishes loading.
-  static void setWebViewLoadedCallback(
-    void Function(dynamic) callback,
-  ) {
-    _eventChannel.receiveBroadcastStream().listen((dynamic event) {
-      debugPrint("$event");
-      callback(event);
-    });
-  }
-
-  /// Sets whether user interaction is enabled on the WebView.
-  static Future<void> setUserInteractionEnabled(bool enabled) async {
-    try {
-      await _channel.invokeMethod<void>(
-        "setUserInteractionEnabled",
-        <String, dynamic>{"enabled": enabled},
+    } else if (defaultTargetPlatform == TargetPlatform.iOS) {
+      return UiKitView(
+        viewType: viewType,
+        onPlatformViewCreated: (int id) {
+          widget.controller.setViewId(id);
+        },
+        creationParams: creationParams,
+        creationParamsCodec: const StandardMessageCodec(),
       );
-      debugPrint("Called setUserInteractionEnabled: $enabled");
-    } on PlatformException catch (e) {
-      debugPrint("Failed to set user interaction: '${e.message}'.");
     }
+
+    return Text("${defaultTargetPlatform} is not yet supported by the webview_plugin");
   }
 }
