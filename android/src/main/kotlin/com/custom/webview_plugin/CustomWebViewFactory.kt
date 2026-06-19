@@ -81,11 +81,12 @@ class WebViewMoFlutter(
             val jsChannels = (args["javaScriptChannelNames"] as? List<*>)?.filterIsInstance<String>() ?: emptyList()
             val zoomEnabled = args["zoomEnabled"] as? Boolean ?: true
             val multipleWindows = args["enableMultipleWindows"] as? Boolean ?: true
+            val disableCache = args["disableCache"] as? Boolean ?: false
 
             webViewManager.enableZoom(zoomEnabled)
             webViewManager.enableMultipleWindows(multipleWindows)
             if (initialUrl != null) {
-                webViewManager.loadURL(initialUrl, jsChannels, headers)
+                webViewManager.loadURL(initialUrl, jsChannels, headers, disableCache)
             }
         }
     }
@@ -146,7 +147,8 @@ class WebViewMoFlutter(
             val zoomEnabled = call.argument<Boolean>("zoomEnabled")
             val enableMultipleWindows = call.argument<Boolean>("enableMultipleWindows")
             val headers = call.argument<Map<String, String>>("headers")
-            webViewManager.loadURL(urlString, jsChannels, headers)
+            val disableCache = call.argument<Boolean>("disableCache") ?: false
+            webViewManager.loadURL(urlString, jsChannels, headers, disableCache)
             webViewManager.enableZoom(zoomEnabled ?: false)
             webViewManager.enableMultipleWindows(enableMultipleWindows ?: false)
             result.success(null)
@@ -671,8 +673,14 @@ class WebViewManager(
         }
     }
 
-    fun loadURL(urlString: String, javaScriptChannelNames: List<String>, headers: Map<String, String>? = null) {
-        Log.d("CustomWebViewPlugin", "loadURL : $urlString")
+    fun loadURL(
+        urlString: String,
+        javaScriptChannelNames: List<String>,
+        headers: Map<String, String>? = null,
+        disableCache: Boolean = false
+    ) {
+        Log.d("CustomWebViewPlugin", "loadURL : $urlString disableCache=$disableCache")
+        applyCacheMode(disableCache)
         if (urlString.isNotEmpty()) {
             javaScriptChannelNames.forEach { addJavascriptChannel(it) }
             if (headers != null && headers.isNotEmpty()) {
@@ -682,6 +690,20 @@ class WebViewManager(
             }
         }
         if (isWebViewPaused) resumeWebView()
+    }
+
+    /**
+     * Controls the WebView HTTP cache strategy for the current page.
+     *
+     * [disableCache] = true sets [WebSettings.LOAD_NO_CACHE], so the page is always
+     * fetched from the network and never served from a stale cached copy. Used for
+     * pages whose content updates server-side (e.g. Refer & Earn) where cached data
+     * must not be shown. Defaults back to [WebSettings.LOAD_DEFAULT] otherwise so other
+     * webviews keep their normal caching behaviour.
+     */
+    fun applyCacheMode(disableCache: Boolean) {
+        webView?.settings?.cacheMode =
+            if (disableCache) WebSettings.LOAD_NO_CACHE else WebSettings.LOAD_DEFAULT
     }
 
     fun enableZoom(isZoomEnable: Boolean) {

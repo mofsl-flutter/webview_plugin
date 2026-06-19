@@ -97,6 +97,7 @@ class CustomWebViewController {
     bool? isChart,
     bool? zoomEnabled,
     bool? enableMultipleWindows,
+    bool? disableCache,
   }) async {
     await _idCompleter.future;
     try {
@@ -107,6 +108,7 @@ class CustomWebViewController {
         "isChart": isChart,
         "zoomEnabled": zoomEnabled,
         "enableMultipleWindows": enableMultipleWindows,
+        "disableCache": disableCache,
       });
     } on PlatformException catch (e) {
       debugPrint("Failed to load URL: ${e.message}");
