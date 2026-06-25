@@ -5,6 +5,7 @@ import android.app.Activity
 import android.app.AlertDialog
 import android.app.DownloadManager
 import android.content.ContentValues
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.Intent
@@ -755,17 +756,22 @@ class WebViewManager(
             }
             intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
 
-            if (intent.resolveActivity(context.packageManager) != null) {
+            // Use try/catch instead of resolveActivity(): on Android 11+ (API 30+),
+            // resolveActivity() returns null for apps not declared in <queries> even
+            // when installed, causing silent no-ops for whatsapp:// and similar schemes.
+            try {
                 context.startActivity(intent)
-            } else if (scheme == "intent") {
-                val fallbackUrl = intent.getStringExtra("browser_fallback_url")
-                if (!fallbackUrl.isNullOrEmpty()) {
-                    webView?.loadUrl(fallbackUrl)
+            } catch (e: ActivityNotFoundException) {
+                if (scheme == "intent") {
+                    val fallbackUrl = intent.getStringExtra("browser_fallback_url")
+                    if (!fallbackUrl.isNullOrEmpty()) {
+                        webView?.loadUrl(fallbackUrl)
+                    } else {
+                        Log.w("CustomWebViewPlugin", "No app for intent and no fallback: $url")
+                    }
                 } else {
-                    Log.w("CustomWebViewPlugin", "No app for intent and no fallback: $url")
+                    Log.w("CustomWebViewPlugin", "No app found for scheme '$scheme': $url")
                 }
-            } else {
-                Log.w("CustomWebViewPlugin", "No app found for scheme '$scheme': $url")
             }
             true
         } catch (e: Exception) {

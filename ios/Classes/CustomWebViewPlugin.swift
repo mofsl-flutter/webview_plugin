@@ -279,14 +279,17 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
                     UIApplication.shared.open(url, options: [:], completionHandler: nil)
                     decisionHandler(.cancel) // Cancel the navigation in WebView
                     return
-                } else if (url.absoluteString.contains("tel:")) || (url.absoluteString.contains("mailto:")) {
-                    if UIApplication.shared.canOpenURL(url) {
-                      UIApplication.shared.open(url, options: [:], completionHandler: nil)
-                      decisionHandler(.cancel)
-                      return
-                    }
                 }
-                
+                // Any non-web scheme (whatsapp://, tel:, mailto:, sms://, upi://, etc.)
+                // must be handed off to the system — WKWebView cannot load them and
+                // attempting to do so causes a silent navigation failure.
+                let webSchemes: Set<String> = ["http", "https", "file", "data", "blob", "javascript", "about"]
+                if !webSchemes.contains(url.scheme?.lowercased() ?? "") {
+                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                    decisionHandler(.cancel)
+                    return
+                }
+
                 decisionHandler(.allow) // Allow navigation for other URLs
             }
             return
@@ -309,6 +312,14 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         if scheme == "data" {
             NSLog("%@", "[BlobDownload] intercepted data URL from window.open")
             saveDataUrl(url)
+            return nil
+        }
+
+        // Non-web schemes triggered via window.open() (e.g. whatsapp://) cannot be
+        // loaded by a WKWebView — open them externally instead of creating a popup.
+        let webSchemes: Set<String> = ["http", "https", "file", "data", "blob", "javascript", "about"]
+        if !webSchemes.contains(url.scheme?.lowercased() ?? "") {
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
             return nil
         }
 
