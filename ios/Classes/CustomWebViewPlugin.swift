@@ -279,14 +279,17 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
                     UIApplication.shared.open(url, options: [:], completionHandler: nil)
                     decisionHandler(.cancel) // Cancel the navigation in WebView
                     return
-                } else if (url.absoluteString.contains("tel:")) || (url.absoluteString.contains("mailto:")) {
-                    if UIApplication.shared.canOpenURL(url) {
-                      UIApplication.shared.open(url, options: [:], completionHandler: nil)
-                      decisionHandler(.cancel)
-                      return
-                    }
                 }
-                
+                // Any non-web scheme (whatsapp://, tel:, mailto:, sms://, upi://, etc.)
+                // must be handed off to the system — WKWebView cannot load them and
+                // attempting to do so causes a silent navigation failure.
+                let webSchemes: Set<String> = ["http", "https", "file", "data", "blob", "javascript", "about"]
+                if !webSchemes.contains(url.scheme?.lowercased() ?? "") {
+                    UIApplication.shared.open(url, options: [:], completionHandler: nil)
+                    decisionHandler(.cancel)
+                    return
+                }
+
                 decisionHandler(.allow) // Allow navigation for other URLs
             }
             return
@@ -312,6 +315,14 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
             return nil
         }
 
+        // Non-web schemes triggered via window.open() (e.g. whatsapp://) cannot be
+        // loaded by a WKWebView — open them externally instead of creating a popup.
+        let webSchemes: Set<String> = ["http", "https", "file", "data", "blob", "javascript", "about"]
+        if !webSchemes.contains(url.scheme?.lowercased() ?? "") {
+            UIApplication.shared.open(url, options: [:], completionHandler: nil)
+            return nil
+        }
+
         let newWebView = WKWebView(frame: .zero, configuration: configuration)
         newWebView.uiDelegate = self
         newWebView.navigationDelegate = self
@@ -326,13 +337,11 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         didReceive challenge: URLAuthenticationChallenge,
         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
-        guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,
-              let serverTrust = challenge.protectionSpace.serverTrust else {
-            completionHandler(.performDefaultHandling, nil)
-            return
-        }
-        // Trust the certificate — supports self-signed / internal CA certificates.
-        completionHandler(.useCredential, URLCredential(trust: serverTrust))
+        // Let the system perform standard certificate-chain validation. We must
+        // never blindly trust the server certificate — building a URLCredential
+        // from an unevaluated serverTrust bypasses TLS validation and exposes the
+        // WebView to man-in-the-middle attacks.
+        completionHandler(.performDefaultHandling, nil)
     }
 
     @available(iOS 18.4, *)
