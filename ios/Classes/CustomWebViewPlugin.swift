@@ -63,6 +63,12 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
     private var isChart = true
     private var progressObserver: NSKeyValueObservation?
     private var fileUploadCompletionHandler: (([URL]?) -> Void)?
+    // Retains the window.open()/target="_blank" popup webview and the modal that
+    // presents it. Without this, the popup WKWebView is never shown and — since
+    // nothing else keeps it alive — gets torn down almost immediately, which is
+    // what left window.open() callers on the JS side holding a dead reference.
+    private var popupWebView: WKWebView?
+    private weak var popupNavigationController: UINavigationController?
 
     override init() {
         super.init()
@@ -190,26 +196,36 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        print("Started Loading: \(String(describing: webView.url))")
+        let source = webView === popupWebView ? "POPUP" : (webView === self.webView ? "MAIN" : "OTHER")
+        NSLog("%@", "[\(source)] Started Loading: \(String(describing: webView.url))")
         if let url = webView.url?.absoluteString {
             delegate?.onPageStarted(url: url)
         }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-        print("Finished Loading: \(String(describing: webView.url))")
+        let source = webView === popupWebView ? "POPUP" : (webView === self.webView ? "MAIN" : "OTHER")
+        NSLog("%@", "[\(source)] Finished Loading: \(String(describing: webView.url))")
         if let url = webView.url?.absoluteString {
             delegate?.onPageFinished(url: url)
         }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
-        print("Error loading page: \(error.localizedDescription)")
+        let source = webView === popupWebView ? "POPUP" : (webView === self.webView ? "MAIN" : "OTHER")
+        NSLog("%@", "[\(source)] Error loading page (provisional): \(error.localizedDescription)")
+        delegate?.onReceivedError(message: error.localizedDescription)
+    }
+
+    func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
+        let source = webView === popupWebView ? "POPUP" : (webView === self.webView ? "MAIN" : "OTHER")
+        NSLog("%@", "[\(source)] Error loading page (committed): \(error.localizedDescription)")
         delegate?.onReceivedError(message: error.localizedDescription)
     }
 
     func webView(_ webView: WKWebView, didReceive serverRedirectForProvisionalNavigation: WKNavigation!) {
-        print("Redirect detected.")
+        let source = webView === popupWebView ? "POPUP" : (webView === self.webView ? "MAIN" : "OTHER")
+        NSLog("%@", "[\(source)] Redirect detected.")
     }
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
@@ -240,19 +256,28 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
             messageString = bodyString
         }
 
+        NSLog("%@", "[JSChannel] \(message.name): \(messageString.prefix(500))")
+
         if configuredJavaScriptChannels.contains(message.name) {
             delegate?.onJavascriptChannelMessageReceived(channelName: message.name, message: messageString)
         }
-        
+
         delegate?.sendMessageBody(body: messageString)
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction, decisionHandler: @escaping (WKNavigationActionPolicy) -> Void) {
+        let source = webView === popupWebView ? "POPUP" : (webView === self.webView ? "MAIN" : "OTHER")
         if let url = navigationAction.request.url {
             // blob:/data: URLs are downloads, not navigations — WKWebView cannot load
             // them as pages (navigation would fail and surface "download failed").
             let scheme = url.scheme?.lowercased()
-            NSLog("%@", "[CustomWebView] navigation request (\(scheme ?? "nil")): \(url.absoluteString.prefix(200))")
+            let targetFrameDesc: String
+            if let targetFrame = navigationAction.targetFrame {
+                targetFrameDesc = targetFrame.isMainFrame ? "mainFrame" : "subFrame"
+            } else {
+                targetFrameDesc = "nil(new-window-request)"
+            }
+            NSLog("%@", "[CustomWebView][\(source)] navigation request (\(scheme ?? "nil")) type=\(navigationAction.navigationType.rawValue) targetFrame=\(targetFrameDesc): \(url.absoluteString.prefix(200))")
             if scheme == "blob" {
                 NSLog("%@", "[BlobDownload] intercepted blob URL, injecting fetch script")
                 decisionHandler(.cancel)
@@ -269,13 +294,15 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
             // Allow blocking from Dart
             delegate?.onNavigationRequest(url: url.absoluteString) { allow in
                 if !allow {
+                    NSLog("%@", "[CustomWebView][\(source)] decision: CANCEL (onNavigationRequest denied)")
                     decisionHandler(.cancel)
                     return
                 }
-                
+
                 // Check if the URL is a file link or special scheme
                 if url.absoluteString.contains(".pdf") || url.absoluteString.contains("SH=") || url.isFileURL {
                     // Open the URL in an external browser
+                    NSLog("%@", "[CustomWebView][\(source)] decision: CANCEL (pdf/SH/file -> external)")
                     UIApplication.shared.open(url, options: [:], completionHandler: nil)
                     decisionHandler(.cancel) // Cancel the navigation in WebView
                     return
@@ -284,12 +311,15 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
                 // must be handed off to the system — WKWebView cannot load them and
                 // attempting to do so causes a silent navigation failure.
                 let webSchemes: Set<String> = ["http", "https", "file", "data", "blob", "javascript", "about"]
-                if !webSchemes.contains(url.scheme?.lowercased() ?? "") {
+                let requestedScheme = url.scheme?.lowercased() ?? ""
+                if !requestedScheme.isEmpty && !webSchemes.contains(requestedScheme) {
+                    NSLog("%@", "[CustomWebView][\(source)] decision: CANCEL (non-web scheme -> external)")
                     UIApplication.shared.open(url, options: [:], completionHandler: nil)
                     decisionHandler(.cancel)
                     return
                 }
 
+                NSLog("%@", "[CustomWebView][\(source)] decision: ALLOW")
                 decisionHandler(.allow) // Allow navigation for other URLs
             }
             return
@@ -299,6 +329,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        NSLog("%@", "[Popup] createWebViewWith invoked, url=\(navigationAction.request.url?.absoluteString ?? "nil")")
         guard let url = navigationAction.request.url else { return nil }
 
         // window.open on a blob/data URL is a download, not a popup — a popup
@@ -317,8 +348,14 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
         // Non-web schemes triggered via window.open() (e.g. whatsapp://) cannot be
         // loaded by a WKWebView — open them externally instead of creating a popup.
+        // window.open('', '_blank') (no URL yet — callers commonly grab a handle
+        // synchronously, then navigate it later, e.g. via windowInstance.location=)
+        // has an empty/nil scheme; it must fall through to popup creation below,
+        // not be treated as a foreign scheme (UIApplication.shared.open on an empty
+        // URL fails outright, which previously made window.open() return null).
         let webSchemes: Set<String> = ["http", "https", "file", "data", "blob", "javascript", "about"]
-        if !webSchemes.contains(url.scheme?.lowercased() ?? "") {
+        let requestedScheme = url.scheme?.lowercased() ?? ""
+        if !requestedScheme.isEmpty && !webSchemes.contains(requestedScheme) {
             UIApplication.shared.open(url, options: [:], completionHandler: nil)
             return nil
         }
@@ -327,9 +364,60 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         newWebView.uiDelegate = self
         newWebView.navigationDelegate = self
 
-        newWebView.load(URLRequest(url: url))
+        // window.open('', '_blank') gives JS a handle with nothing to show yet —
+        // callers (e.g. this SDK) immediately follow up with
+        // windowInstance.location = realURL. If we kick off our own load of this
+        // empty URL first, that load is still in-flight/settling on the same
+        // WKWebView when the real navigation's decidePolicyFor fires a few ms
+        // later, and WebKit silently drops the real navigation (allowed, but no
+        // didStartProvisionalNavigation ever follows — confirmed via timestamped
+        // logging). Skipping the pointless empty load removes that race.
+        if !url.absoluteString.isEmpty {
+            newWebView.load(URLRequest(url: url))
+        }
+        presentPopupWebView(newWebView)
 
         return newWebView
+    }
+
+    // Presents the popup webview modally so it is actually visible to the user
+    // and, just as importantly, retained (self.popupWebView) for as long as it's
+    // on screen — mirroring the Android implementation, which shows the popup
+    // WebView inside an AlertDialog that the dialog itself keeps alive.
+    private func presentPopupWebView(_ popup: WKWebView) {
+        guard let rootVC = UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
+            NSLog("%@", "[Popup] no key window / root view controller found to present popup")
+            return
+        }
+        var topVC = rootVC
+        while let presented = topVC.presentedViewController { topVC = presented }
+
+        let contentVC = UIViewController()
+        contentVC.view = popup
+        contentVC.navigationItem.rightBarButtonItem = UIBarButtonItem(
+            title: "Close", style: .done, target: self, action: #selector(closePopupWebView)
+        )
+
+        let navController = UINavigationController(rootViewController: contentVC)
+        navController.modalPresentationStyle = .pageSheet
+        navController.presentationController?.delegate = self
+
+        popupWebView = popup
+        popupNavigationController = navController
+
+        topVC.present(navController, animated: true)
+    }
+
+    @objc private func closePopupWebView() {
+        popupNavigationController?.dismiss(animated: true)
+        popupWebView = nil
+        popupNavigationController = nil
+    }
+
+    // Called when the popup's JS runs window.close().
+    func webViewDidClose(_ webView: WKWebView) {
+        guard webView === popupWebView else { return }
+        closePopupWebView()
     }
 
     func webView(
@@ -567,6 +655,15 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
                 x: webView.bounds.midX, y: webView.bounds.midY, width: 1, height: 1)
             topVC.present(activityVC, animated: true)
         }
+    }
+}
+
+extension WebViewManager: UIAdaptivePresentationControllerDelegate {
+    // User swiped the popup sheet away without tapping "Close" — release our
+    // strong reference so the popup webview can be deallocated.
+    func presentationControllerDidDismiss(_ presentationController: UIPresentationController) {
+        popupWebView = nil
+        popupNavigationController = nil
     }
 }
 
