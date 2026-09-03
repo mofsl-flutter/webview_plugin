@@ -19,8 +19,10 @@ import android.os.Message
 import android.provider.MediaStore
 import android.util.Base64
 import android.util.Log
+import android.view.View
 import android.view.ViewGroup
 import android.view.WindowManager
+import android.widget.FrameLayout
 import android.webkit.ConsoleMessage
 import android.webkit.JavascriptInterface
 import android.webkit.JsResult
@@ -275,6 +277,14 @@ class WebViewManager(
     private val configuredJavaScriptChannels: MutableSet<String> = mutableSetOf()
     private var isWebViewPaused: Boolean = false
 
+    // Fullscreen HTML5 <video> support (e.g. Learning Hub videos). Without these,
+    // WebView has no native view to expand into when a page's video player requests
+    // fullscreen, so the fullscreen button silently does nothing.
+    private var fullscreenView: View? = null
+    private var fullscreenCallback: WebChromeClient.CustomViewCallback? = null
+    private var fullscreenContainer: FrameLayout? = null
+    private var originalSystemUiVisibility: Int = 0
+
     // Always anchor to the CURRENT Activity window. The live `context` from Flutter's create()
     // is the Activity in hybrid composition; unwrap it, then fall back to the plugin's
     // currently-attached Activity. Never reuse a frozen Activity reference — that is the cause
@@ -380,7 +390,74 @@ class WebViewManager(
             ): Boolean {
                 return showPopupWebView(resultMsg)
             }
+
+            override fun onShowCustomView(view: View?, callback: WebChromeClient.CustomViewCallback?) {
+                showFullscreenView(view, callback)
+            }
+
+            override fun onHideCustomView() {
+                hideFullscreenView()
+            }
         }
+    }
+
+    @Suppress("DEPRECATION")
+    private fun showFullscreenView(view: View?, callback: WebChromeClient.CustomViewCallback?) {
+        if (view == null) return
+        // A custom view is already showing (e.g. a stray second request) — reject the
+        // new one instead of leaking the old one.
+        if (fullscreenView != null) {
+            callback?.onCustomViewHidden()
+            return
+        }
+        val decorView = activity?.window?.decorView as? FrameLayout ?: return
+
+        fullscreenView = view
+        fullscreenCallback = callback
+        originalSystemUiVisibility = decorView.systemUiVisibility
+
+        fullscreenContainer = FrameLayout(currentActivityContext()).apply {
+            layoutParams = FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+            setBackgroundColor(android.graphics.Color.BLACK)
+            addView(
+                view,
+                FrameLayout.LayoutParams(
+                    FrameLayout.LayoutParams.MATCH_PARENT,
+                    FrameLayout.LayoutParams.MATCH_PARENT
+                )
+            )
+        }
+        decorView.addView(
+            fullscreenContainer,
+            FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+        )
+
+        decorView.systemUiVisibility = (
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                or View.SYSTEM_UI_FLAG_FULLSCREEN
+                or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+            )
+        webView?.visibility = View.GONE
+    }
+
+    @Suppress("DEPRECATION")
+    private fun hideFullscreenView() {
+        val decorView = activity?.window?.decorView as? FrameLayout
+        fullscreenContainer?.let { decorView?.removeView(it) }
+        fullscreenContainer = null
+        fullscreenView = null
+
+        decorView?.systemUiVisibility = originalSystemUiVisibility
+        webView?.visibility = View.VISIBLE
+
+        fullscreenCallback?.onCustomViewHidden()
+        fullscreenCallback = null
     }
 
     private fun handleFileChooser(
@@ -783,6 +860,7 @@ class WebViewManager(
     fun destroyWebView() {
         isWebViewPaused = true
         Log.d("CustomWebViewPlugin", "destroyWebView")
+        if (fullscreenView != null) hideFullscreenView()
         webView?.destroy()
         webView = null
     }
