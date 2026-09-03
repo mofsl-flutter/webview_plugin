@@ -3,6 +3,7 @@ package com.custom.webview_plugin
 import android.annotation.SuppressLint
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.pm.ActivityInfo
 import android.app.DownloadManager
 import android.content.ContentValues
 import android.content.ActivityNotFoundException
@@ -444,6 +445,10 @@ class WebViewManager(
                 or View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
             )
         webView?.visibility = View.GONE
+
+        // Let the fullscreen video follow the device's physical rotation even
+        // though the app is portrait-locked everywhere else.
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_SENSOR_LANDSCAPE
     }
 
     @Suppress("DEPRECATION")
@@ -455,6 +460,7 @@ class WebViewManager(
 
         decorView?.systemUiVisibility = originalSystemUiVisibility
         webView?.visibility = View.VISIBLE
+        activity?.requestedOrientation = ActivityInfo.SCREEN_ORIENTATION_PORTRAIT
 
         fullscreenCallback?.onCustomViewHidden()
         fullscreenCallback = null
