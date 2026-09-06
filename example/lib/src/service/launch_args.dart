@@ -10,7 +10,15 @@ const MethodChannel _channel = MethodChannel("webview_harness/launch");
 @immutable
 class LaunchArgs {
   /// Creates a set of launch arguments.
-  const LaunchArgs({this.xApiKey, this.clientCode, this.userType, this.appId});
+  const LaunchArgs({
+    this.xApiKey,
+    this.clientCode,
+    this.userType,
+    this.appId,
+    this.autorun = false,
+    this.flows,
+    this.repeats,
+  });
 
   /// Product key for the flows that need one.
   final String? xApiKey;
@@ -24,9 +32,31 @@ class LaunchArgs {
   /// Application id.
   final String? appId;
 
+  /// Run headlessly on launch and emit results, with no taps.
+  final bool autorun;
+
+  /// Comma-separated flow ids to cover; null means the default single flow.
+  final String? flows;
+
+  /// Repeats per arm.
+  final int? repeats;
+
+  /// Flow ids to run, or an empty list when unspecified.
+  List<String> get flowIds => (flows ?? "")
+      .split(",")
+      .map((String s) => s.trim())
+      .where((String s) => s.isNotEmpty)
+      .toList();
+
   /// Whether anything was supplied.
   bool get isEmpty =>
-      xApiKey == null && clientCode == null && userType == null && appId == null;
+      xApiKey == null &&
+      clientCode == null &&
+      userType == null &&
+      appId == null &&
+      !autorun &&
+      flows == null &&
+      repeats == null;
 
   /// Reads the extras the app was launched with.
   ///
@@ -64,11 +94,15 @@ class LaunchArgs {
       return s.isEmpty ? null : s;
     }
 
+    final Object? autorunRaw = raw["autorun"];
     return LaunchArgs(
       xApiKey: get("xapikey"),
       clientCode: get("clientcode"),
       userType: get("usertype"),
       appId: get("appid"),
+      autorun: autorunRaw is bool ? autorunRaw : autorunRaw?.toString() == "true",
+      flows: get("flows"),
+      repeats: int.tryParse(get("repeats") ?? ""),
     );
   }
 }

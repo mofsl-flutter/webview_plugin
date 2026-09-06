@@ -1,6 +1,8 @@
 import "package:flutter/material.dart";
 
 import "../harness_controller.dart";
+import "../service/autorun.dart";
+import "../service/launch_args.dart";
 import "analysis_tab.dart";
 import "audit_tab.dart";
 import "browser_tab.dart";
@@ -20,6 +22,27 @@ class _HomeScreenState extends State<HomeScreen> {
   int _tab = 0;
   bool _viewMounted = true;
   int _viewGeneration = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // Deferred to after the first frame: autorun drives the web view, and the platform view does
+    // not exist until this tree has been laid out once. Starting earlier means every call waits
+    // on a controller whose view was never created — which never completes, and never errors.
+    WidgetsBinding.instance.addPostFrameCallback((_) => _maybeAutorun());
+  }
+
+  Future<void> _maybeAutorun() async {
+    final LaunchArgs args = await LaunchArgs.read();
+    if (!args.autorun || !mounted) return;
+    // Give the platform view a moment to report creation before the first load.
+    await Future<void>.delayed(const Duration(seconds: 2));
+    if (!mounted) return;
+    await Autorun(
+      harnessOf: () => _harness,
+      remountView: _remountView,
+    ).run(args);
+  }
 
   /// Tears the platform view down and mounts a fresh one, with a fresh controller.
   ///
