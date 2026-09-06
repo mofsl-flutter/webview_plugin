@@ -65,10 +65,15 @@ const List<WebFlow> kWebFlows = <WebFlow>[
       host: FlowHost.superApp,
       needsApiKey: true,
       note: "url is the bare string value of `data`"),
+  // Verified broken server-side, 2026-09-04: returns HTTP 500
+  // NullReferenceException from superAppServicesMiddleWare.apiKeyMiddleware.InvokeAsync, both
+  // with and without an XApiKey. So it is NOT a missing-key problem, and the refer & earn key is
+  // not valid here. Kept in the catalog so the failure stays visible; expect a red row until the
+  // SuperApp services owners fix the middleware.
   WebFlow("superSavingPass", "Super saving pass", "/services/Ekyc/SubscriptionPlan",
       method: FlowMethod.post,
       host: FlowHost.superApp,
-      note: "url is the bare string value of `data`"),
+      note: "HTTP 500 server-side (apiKeyMiddleware NPE); url would be bare `data`"),
   // NOTE: "offernrewards" is Offers & Rewards, a different product from Refer & Earn.
   WebFlow("offersRewards", "Offers & rewards", "api/Url/Other/offernrewards"),
   WebFlow("smallcase", "Smallcase", "api/Url/Other/adviceallsmallcases"),
