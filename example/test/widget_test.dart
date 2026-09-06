@@ -8,6 +8,7 @@ void main() {
 
     expect(find.text("WebView Harness"), findsOneWidget);
     expect(find.text("Browser"), findsOneWidget);
+    expect(find.text("Analysis"), findsOneWidget);
     expect(find.text("Audit"), findsOneWidget);
     expect(find.text("Log"), findsOneWidget);
   });

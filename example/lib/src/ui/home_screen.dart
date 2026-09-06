@@ -1,6 +1,7 @@
 import "package:flutter/material.dart";
 
 import "../harness_controller.dart";
+import "analysis_tab.dart";
 import "audit_tab.dart";
 import "browser_tab.dart";
 import "log_tab.dart";
@@ -41,6 +42,7 @@ class _HomeScreenState extends State<HomeScreen> {
         index: _tab,
         children: <Widget>[
           BrowserTab(harness: _harness),
+          AnalysisTab(harness: _harness),
           AuditTab(harness: _harness),
           const LogTab(),
         ],
@@ -50,6 +52,7 @@ class _HomeScreenState extends State<HomeScreen> {
         onDestinationSelected: (int i) => setState(() => _tab = i),
         destinations: const <NavigationDestination>[
           NavigationDestination(icon: Icon(Icons.public), label: "Browser"),
+          NavigationDestination(icon: Icon(Icons.speed), label: "Analysis"),
           NavigationDestination(icon: Icon(Icons.rule), label: "Audit"),
           NavigationDestination(icon: Icon(Icons.list_alt), label: "Log"),
         ],
