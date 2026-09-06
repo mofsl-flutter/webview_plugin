@@ -16,8 +16,27 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> {
-  final HarnessController _harness = HarnessController();
+  HarnessController _harness = HarnessController();
   int _tab = 0;
+  bool _viewMounted = true;
+  int _viewGeneration = 0;
+
+  /// Tears the platform view down and mounts a fresh one, with a fresh controller.
+  ///
+  /// Both halves are required. Unmounting alone would leave the old controller bound to a
+  /// destroyed native view, because setViewId completes once and early-returns on every later
+  /// call — so the new view would simply be ignored.
+  Future<void> _remountView() async {
+    setState(() => _viewMounted = false);
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+    if (!mounted) return;
+    setState(() {
+      _harness = HarnessController();
+      _viewGeneration++;
+      _viewMounted = true;
+    });
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -41,8 +60,16 @@ class _HomeScreenState extends State<HomeScreen> {
       body: IndexedStack(
         index: _tab,
         children: <Widget>[
-          BrowserTab(harness: _harness),
-          AnalysisTab(harness: _harness),
+          BrowserTab(
+            key: ValueKey<int>(_viewGeneration),
+            harness: _harness,
+            viewMounted: _viewMounted,
+          ),
+          AnalysisTab(
+            harness: _harness,
+            harnessOf: () => _harness,
+            onRemountView: _remountView,
+          ),
           AuditTab(harness: _harness),
           const LogTab(),
         ],

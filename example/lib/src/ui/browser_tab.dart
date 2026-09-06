@@ -7,10 +7,13 @@ import "../recorder.dart";
 /// A live web view plus every operation the controller exposes.
 class BrowserTab extends StatefulWidget {
   /// Creates the tab.
-  const BrowserTab({required this.harness, super.key});
+  const BrowserTab({required this.harness, this.viewMounted = true, super.key});
 
   /// Shared harness.
   final HarnessController harness;
+
+  /// False while the fresh-view arm is between platform views.
+  final bool viewMounted;
 
   @override
   State<BrowserTab> createState() => _BrowserTabState();
@@ -67,12 +70,15 @@ class _BrowserTabState extends State<BrowserTab> {
         Expanded(
           child: Stack(
             children: <Widget>[
+              if (!widget.viewMounted)
+                const Center(child: Text("platform view unmounted", style: TextStyle(fontSize: 11)))
+              else
               CustomWebViewWidget(
                 controller: widget.harness.controller,
                 javascriptChannelNames: const <String>[kHarnessChannel],
-                // Explicit: the widget defaults isChart to true, which takes a different native
-                // branch. Nothing here is a chart.
-                isChart: false,
+                // isChart is cosmetic on both platforms (Android ignores it; the iOS branch that
+                // reads it is never called), so it is left at its default rather than implying
+                // it does something.
               ),
             ],
           ),

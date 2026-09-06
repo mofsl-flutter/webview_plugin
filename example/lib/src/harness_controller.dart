@@ -97,7 +97,17 @@ class HarnessController {
   }
 
   /// Clears timings and restarts the clock, then requests [url].
-  Future<void> load(String url, {bool disableCache = false}) async {
+  ///
+  /// [zoomEnabled] and [enableMultipleWindows] are passed explicitly and always. Dart sends null
+  /// for an omitted named argument, and Android's handleLoadUrl then defaults both to **false** —
+  /// so omitting them does not mean "leave alone", it means "turn off". Every measurement taken
+  /// before this was fixed silently ran with zoom and multi-window disabled.
+  Future<void> load(
+    String url, {
+    bool disableCache = false,
+    bool zoomEnabled = true,
+    bool enableMultipleWindows = true,
+  }) async {
     _url = url;
     _started = null;
     _firstProgress = null;
@@ -112,10 +122,12 @@ class HarnessController {
     await controller.loadUrl(
       url,
       javaScriptChannelNames: <String>[kHarnessChannel],
-      // Default is true, which routes through the native chart branch. Anything being measured
-      // wants the plain path, so this is explicit rather than inherited.
-      isChart: false,
+      // isChart is deliberately not passed. A native audit found it is cosmetic on both platforms:
+      // Android never reads the argument, and the iOS branch that consumes it lives in a method
+      // with zero call sites. Setting it would produce an arm whose A and B are identical.
       disableCache: disableCache,
+      zoomEnabled: zoomEnabled,
+      enableMultipleWindows: enableMultipleWindows,
     );
   }
 

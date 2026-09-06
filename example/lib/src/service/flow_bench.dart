@@ -1,6 +1,10 @@
 import "dart:async";
 
+import "package:custom_webview_plugin/custom_webview_cookie_manager.dart";
+import "package:custom_webview_plugin/custom_webview_plugin.dart";
+
 import "../config/web_flows.dart";
+import "../model/run_arm.dart";
 import "../harness_controller.dart";
 import "../recorder.dart";
 import "url_api.dart";
@@ -20,6 +24,8 @@ class FlowResult {
   FlowResult({
     required this.flow,
     required this.arm,
+    this.runArm = const RunArm(),
+    this.repeat = 0,
     this.fetch,
     this.pageStartedMs,
     this.pageFinishedMs,
@@ -32,6 +38,12 @@ class FlowResult {
 
   /// Which arm.
   final BenchArm arm;
+
+  /// Toggle combination this was measured under.
+  final RunArm runArm;
+
+  /// Zero-based repeat index within the arm.
+  final int repeat;
 
   /// API leg, when [arm] is [BenchArm.live].
   final UrlFetch? fetch;
@@ -68,10 +80,17 @@ class FlowResult {
 /// apart, so this measures the API leg separately and replays the same URL without it.
 class FlowBench {
   /// Creates a bench.
-  FlowBench({required this.harness, required this.api});
+  FlowBench({required this.harnessOf, required this.api});
 
-  /// Drives the web view and stamps its callbacks.
-  final HarnessController harness;
+  /// Resolves the current harness.
+  ///
+  /// A getter rather than an instance because the fresh-view arm replaces the controller between
+  /// repeats: a CustomWebViewController binds to one platform view for life and cannot be
+  /// rebound, so a new view means a new controller.
+  final HarnessController Function() harnessOf;
+
+  /// The harness backing the current repeat.
+  HarnessController get harness => harnessOf();
 
   /// URL API client.
   final UrlApi api;
@@ -95,19 +114,53 @@ class FlowBench {
   Future<void> run(
     List<WebFlow> flows,
     BenchArm arm, {
+    RunArm runArm = const RunArm(),
     Duration perFlowTimeout = const Duration(seconds: 25),
     void Function()? onProgress,
+    Future<void> Function()? remountView,
   }) async {
     _cancelled = false;
     for (final WebFlow flow in flows) {
-      if (_cancelled) return;
-      final FlowResult r = await _runOne(flow, arm, perFlowTimeout);
-      results.add(r);
-      onProgress?.call();
+      for (int i = 0; i < runArm.repeats; i++) {
+        if (_cancelled) return;
+        await _prepare(runArm, i, remountView);
+        final FlowResult r = await _runOne(flow, arm, perFlowTimeout, runArm, i);
+        results.add(r);
+        onProgress?.call();
+      }
     }
   }
 
-  Future<FlowResult> _runOne(WebFlow flow, BenchArm arm, Duration timeout) async {
+  /// Applies the arm's pre-run state before a repeat.
+  ///
+  /// Ordering matters: the view is remounted first, because a fresh platform view means a fresh
+  /// WebView whose settings start at their defaults, and only then is storage cleared.
+  Future<void> _prepare(RunArm runArm, int repeat, Future<void> Function()? remountView) async {
+    if (runArm.freshViewPerRepeat && repeat > 0 && remountView != null) {
+      await remountView();
+    }
+    if (runArm.resetCacheBeforeEach) {
+      await CustomWebViewPlugin.resetCache();
+      HarnessRecorder.instance.record(EntryKind.action, "resetCache",
+          "Android clears cookies + WebStorage only, not the HTTP cache");
+    }
+    if (runArm.clearCookiesBeforeEach) {
+      await CustomWebViewCookieManager.clearCookies();
+    }
+    if (runArm.userAgent != null) {
+      await harness.controller.setCustomUserAgent(
+        runArm.userAgent!.isEmpty ? null : runArm.userAgent,
+      );
+    }
+  }
+
+  Future<FlowResult> _runOne(
+    WebFlow flow,
+    BenchArm arm,
+    Duration timeout,
+    RunArm runArm,
+    int repeat,
+  ) async {
     String? url;
     UrlFetch? fetch;
 
@@ -117,6 +170,8 @@ class FlowBench {
         return FlowResult(
           flow: flow,
           arm: arm,
+          runArm: runArm,
+          repeat: repeat,
           fetch: fetch,
           error: "${fetch.error} — ${_snippet(fetch.rawBody)}",
         );
@@ -129,6 +184,8 @@ class FlowBench {
         return FlowResult(
           flow: flow,
           arm: arm,
+          runArm: runArm,
+          repeat: repeat,
           error: "No captured URL. Run the live arm first, or paste one in.",
         );
       }
@@ -145,12 +202,20 @@ class FlowBench {
 
     harness.timing.addListener(watch);
     try {
-      await harness.load(url);
+      _warnIfHijacked(url);
+      await harness.load(
+        url,
+        disableCache: runArm.disableCache,
+        zoomEnabled: runArm.zoomEnabled,
+        enableMultipleWindows: runArm.enableMultipleWindows,
+      );
       await finished.future.timeout(timeout);
     } on TimeoutException {
       return FlowResult(
         flow: flow,
         arm: arm,
+        runArm: runArm,
+        repeat: repeat,
         fetch: fetch,
         url: url,
         error: "No terminal signal within ${timeout.inSeconds}s",
@@ -168,12 +233,26 @@ class FlowBench {
     return FlowResult(
       flow: flow,
       arm: arm,
+      runArm: runArm,
+      repeat: repeat,
       fetch: fetch,
       url: url,
       pageStartedMs: t?.started,
       pageFinishedMs: t?.finished,
       error: t?.error,
     );
+  }
+
+  /// Flags URLs both platforms divert to the external browser.
+  ///
+  /// Any URL containing `SH=` anywhere, or `.pdf`, is intercepted natively and punted out of the
+  /// app. Refer & Earn carries a long JWT, so a token that happens to contain `SH=` would silently
+  /// take the whole measurement out of the WebView and look like a load failure.
+  void _warnIfHijacked(String url) {
+    if (url.contains("SH=") || url.contains(".pdf")) {
+      HarnessRecorder.instance.record(EntryKind.defect, "url may be hijacked",
+          "contains SH= or .pdf — native code diverts these to the external browser");
+    }
   }
 
   static String _snippet(String body) =>
