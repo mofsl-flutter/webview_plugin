@@ -112,7 +112,7 @@ class FlowBench {
     UrlFetch? fetch;
 
     if (arm == BenchArm.live) {
-      fetch = await api.fetch(flow.path);
+      fetch = await api.fetch(flow);
       if (!fetch.ok) {
         return FlowResult(
           flow: flow,

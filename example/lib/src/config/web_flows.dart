@@ -1,7 +1,33 @@
-/// One web page flow: an `api/Url/*` endpoint whose response carries a page URL.
+/// HTTP verb a flow uses.
+enum FlowMethod {
+  /// The `api/Url/*` family.
+  get,
+
+  /// The SuperApp services family, which posts an empty body.
+  post,
+}
+
+/// Which host serves a flow.
+enum FlowHost {
+  /// Trader API — the `api/Url/*` family.
+  trader,
+
+  /// SuperApp services.
+  superApp,
+}
+
+/// One web page flow: an endpoint whose response carries a page URL.
 class WebFlow {
   /// Creates a flow.
-  const WebFlow(this.id, this.label, this.path, {this.note});
+  const WebFlow(
+    this.id,
+    this.label,
+    this.path, {
+    this.note,
+    this.method = FlowMethod.get,
+    this.host = FlowHost.trader,
+    this.needsApiKey = false,
+  });
 
   /// Short id used in results.
   final String id;
@@ -14,28 +40,35 @@ class WebFlow {
 
   /// Anything unusual about this flow's response shape or params.
   final String? note;
-}
 
-/// Refer & Earn does NOT follow the `api/Url/*` pattern.
-///
-/// It is `POST {SUPER_APP_BASE_URL}/services/api/refer_and_earn/Refer_And_Earn` with an empty
-/// body and a product API key, and its URL arrives as the **bare string value of `data`** rather
-/// than `data.url` — so an extractor that assumes the common shape returns null for exactly the
-/// flow most people reach for first. Same for Super Saving Pass
-/// (`/services/Ekyc/SubscriptionPlan`). Both need their own client; they are listed here for
-/// visibility but are not part of the GET catalog.
-const List<WebFlow> kNonUrlApiFlows = <WebFlow>[
-  WebFlow("referEarn", "Refer & earn", "/services/api/refer_and_earn/Refer_And_Earn",
-      note: "POST to SUPER_APP_BASE_URL, needs referNEarnApiKey, url is data (bare string)"),
-  WebFlow("superSavingPass", "Super saving pass", "/services/Ekyc/SubscriptionPlan",
-      note: "POST to SUPER_APP_BASE_URL, url is data (bare string)"),
-];
+  /// Verb.
+  final FlowMethod method;
+
+  /// Host that serves it.
+  final FlowHost host;
+
+  /// Whether the request needs an `XApiKey` product key in addition to the bearer token.
+  final bool needsApiKey;
+}
 
 /// Every `api/Url/*` endpoint in the app, taken from `packages/trader_network/lib/URL.dart`.
 ///
 /// All are GET and all return a payload whose single interesting field is a URL, which the app
 /// then loads into a WebView. The three noted below do not return the plain `UrlResponse` shape.
+/// The three-way difference these two carry against the other 42: POST not GET, the SuperApp host
+/// not the trader host, and a URL that arrives as the **bare string value of `data`** rather than
+/// `data.url`. The extractor handles the last of those by scanning values for anything that looks
+/// like a URL, so only the request differs.
 const List<WebFlow> kWebFlows = <WebFlow>[
+  WebFlow("referEarn", "Refer & earn", "/services/api/refer_and_earn/Refer_And_Earn",
+      method: FlowMethod.post,
+      host: FlowHost.superApp,
+      needsApiKey: true,
+      note: "url is the bare string value of `data`"),
+  WebFlow("superSavingPass", "Super saving pass", "/services/Ekyc/SubscriptionPlan",
+      method: FlowMethod.post,
+      host: FlowHost.superApp,
+      note: "url is the bare string value of `data`"),
   // NOTE: "offernrewards" is Offers & Rewards, a different product from Refer & Earn.
   WebFlow("offersRewards", "Offers & rewards", "api/Url/Other/offernrewards"),
   WebFlow("smallcase", "Smallcase", "api/Url/Other/adviceallsmallcases"),

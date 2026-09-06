@@ -13,6 +13,11 @@ const String kTokenBase =
 /// Matches `TRADERAPPBASEURL` in the app's `.env_uat`.
 const String kTraderBase = "https://tradingapi.motilaloswaluat.com/TradingApiV2/";
 
+/// Base for the SuperApp services host, which serves the POST URL APIs.
+///
+/// Matches `SUPERAPPBASEURL` in the app's `.env_uat`.
+const String kSuperAppBase = "https://api.dev.riseapp.in";
+
 /// Default client code. Must be an account entitled to the web products under test.
 const String kDefaultClientCode = "T06794";
 

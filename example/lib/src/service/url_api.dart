@@ -2,6 +2,7 @@ import "dart:convert";
 import "dart:io";
 
 import "../config/endpoints.dart";
+import "../config/web_flows.dart";
 
 /// Result of asking an `api/Url/*` endpoint for a page URL.
 class UrlFetch {
@@ -59,7 +60,13 @@ class UrlFetch {
 /// for JSON, which the backend also serves.
 class UrlApi {
   /// Creates a client bound to [token].
-  UrlApi({required this.token, this.appId = kDefaultAppId, this.base = kTraderBase});
+  UrlApi({
+    required this.token,
+    this.appId = kDefaultAppId,
+    this.base = kTraderBase,
+    this.superAppBase = kSuperAppBase,
+    this.apiKey = "",
+  });
 
   /// Bearer token.
   final String token;
@@ -70,19 +77,45 @@ class UrlApi {
   /// Trader API base.
   final String base;
 
-  /// Requests the URL for [path].
-  Future<UrlFetch> fetch(String path, {String apiVersion = "1.0"}) async {
+  /// SuperApp services base.
+  final String superAppBase;
+
+  /// Product key sent as `XApiKey`, for the flows that require one.
+  ///
+  /// Taken at runtime rather than read from the app's committed `.env`, so no product secret
+  /// lives in this repo.
+  final String apiKey;
+
+  /// Requests the URL for [flow].
+  Future<UrlFetch> fetch(WebFlow flow, {String apiVersion = "1.0"}) async {
+    if (flow.needsApiKey && apiKey.isEmpty) {
+      return const UrlFetch(
+        ok: false,
+        statusCode: 0,
+        totalMicros: 0,
+        error: "Needs an XApiKey — paste the product key in the Analysis tab",
+      );
+    }
+    final String root = flow.host == FlowHost.superApp ? superAppBase : base;
     final Stopwatch sw = Stopwatch()..start();
     final HttpClient client = HttpClient()
       ..connectionTimeout = const Duration(seconds: 15);
     try {
-      final HttpClientRequest req =
-          await client.getUrl(Uri.parse("$base$path"));
+      final Uri uri = Uri.parse("$root${flow.path}");
+      final HttpClientRequest req = flow.method == FlowMethod.post
+          ? await client.postUrl(uri)
+          : await client.getUrl(uri);
       req.headers
         ..set("Authorization", "Bearer $token")
         ..set("Accept", "application/json")
         ..set("X-Api-Version", apiVersion)
         ..set("User-Agent", userAgentFor(appId));
+      if (apiKey.isNotEmpty) req.headers.set("XApiKey", apiKey);
+      if (flow.method == FlowMethod.post) {
+        // The app posts an empty object for these; without a body the server answers 411.
+        req.headers.contentType = ContentType.json;
+        req.write("{}");
+      }
       final int connectMicros = sw.elapsedMicroseconds;
 
       final HttpClientResponse res = await req.close();

@@ -24,6 +24,10 @@ class _AnalysisTabState extends State<AnalysisTab> {
   final TextEditingController _userType = TextEditingController(text: kDefaultUserType);
   final TextEditingController _appId = TextEditingController(text: kDefaultAppId);
 
+  /// Product key for the flows that need one (Refer & Earn). Runtime-entered on purpose: the
+  /// app keeps this in a committed .env, and it should not be copied into this repo.
+  final TextEditingController _apiKey = TextEditingController();
+
   String _status = "Not authenticated.";
   String? _token;
   FlowBench? _bench;
@@ -45,7 +49,11 @@ class _AnalysisTabState extends State<AnalysisTab> {
             "${c == null ? "" : " · ${c.uniqueName} · aud expires ${c.remaining?.inMinutes}m"}";
         _bench = FlowBench(
           harness: widget.harness,
-          api: UrlApi(token: r.token!, appId: _appId.text.trim()),
+          api: UrlApi(
+            token: r.token!,
+            appId: _appId.text.trim(),
+            apiKey: _apiKey.text.trim(),
+          ),
         );
       } else {
         _token = null;
@@ -84,6 +92,8 @@ class _AnalysisTabState extends State<AnalysisTab> {
               ),
               const SizedBox(height: 8),
               _field(_appId, "AppId"),
+              const SizedBox(height: 8),
+              _field(_apiKey, "XApiKey (Refer & Earn only — optional)"),
               const SizedBox(height: 8),
               Align(
                 alignment: Alignment.centerLeft,
