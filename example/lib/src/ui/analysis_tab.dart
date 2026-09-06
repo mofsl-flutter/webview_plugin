@@ -6,6 +6,8 @@ import "../harness_controller.dart";
 import "../service/flow_bench.dart";
 import "../service/token_api.dart";
 import "../service/url_api.dart";
+import "flow_detail_screen.dart";
+import "flow_picker.dart";
 
 /// Authenticates, runs the flow catalog through both arms, and shows the split.
 class AnalysisTab extends StatefulWidget {
@@ -26,7 +28,14 @@ class _AnalysisTabState extends State<AnalysisTab> {
 
   /// Product key for the flows that need one (Refer & Earn). Runtime-entered on purpose: the
   /// app keeps this in a committed .env, and it should not be copied into this repo.
-  final TextEditingController _apiKey = TextEditingController();
+  final TextEditingController _apiKey = TextEditingController(
+    // Passed at launch with --dart-define=XAPIKEY=... so the key never has to be typed on the
+    // device and never lands in the repo.
+    text: const String.fromEnvironment("XAPIKEY"),
+  );
+
+  /// Flows a run will cover. Defaults to Refer & Earn, the one flow confirmed working end to end.
+  final Set<String> _selected = <String>{"referEarn"};
 
   String _status = "Not authenticated.";
   String? _token;
@@ -65,11 +74,27 @@ class _AnalysisTabState extends State<AnalysisTab> {
   Future<void> _run(BenchArm arm) async {
     final FlowBench? bench = _bench;
     if (bench == null) return;
+    final List<WebFlow> flows =
+        kWebFlows.where((WebFlow f) => _selected.contains(f.id)).toList();
+    if (flows.isEmpty) return;
     setState(() => _running = true);
-    await bench.run(kWebFlows, arm, onProgress: () {
+    await bench.run(flows, arm, onProgress: () {
       if (mounted) setState(() {});
     });
     if (mounted) setState(() => _running = false);
+  }
+
+  Future<void> _pickFlows() async {
+    final Set<String>? picked = await Navigator.of(context).push<Set<String>>(
+      MaterialPageRoute<Set<String>>(
+        builder: (BuildContext _) => FlowPicker(selected: _selected),
+      ),
+    );
+    if (picked != null && mounted) {
+      setState(() => _selected
+        ..clear()
+        ..addAll(picked));
+    }
   }
 
   @override
@@ -98,6 +123,23 @@ class _AnalysisTabState extends State<AnalysisTab> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(_status, style: Theme.of(context).textTheme.bodySmall),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: <Widget>[
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: _running ? null : _pickFlows,
+                      icon: const Icon(Icons.checklist, size: 18),
+                      label: Text(_selected.length == 1
+                          ? kWebFlows
+                              .firstWhere((WebFlow f) => f.id == _selected.first,
+                                  orElse: () => kWebFlows.first)
+                              .label
+                          : "${_selected.length} flows selected"),
+                    ),
+                  ),
+                ],
               ),
               const SizedBox(height: 8),
               Row(
@@ -168,10 +210,17 @@ class _AnalysisTabState extends State<AnalysisTab> {
       );
 
   Widget _row(FlowResult r) {
+    void open() => Navigator.of(context).push(
+          MaterialPageRoute<void>(
+            builder: (BuildContext _) => FlowDetailScreen(result: r),
+          ),
+        );
     String ms(double? v) => v == null ? "—" : "${v.toStringAsFixed(0)}ms";
     final bool failed = !r.ok;
     return ListTile(
       dense: true,
+      onTap: open,
+      trailing: const Icon(Icons.chevron_right, size: 18),
       leading: Icon(
         failed ? Icons.error_outline : Icons.check_circle_outline,
         size: 18,
