@@ -5,6 +5,7 @@ import "../config/web_flows.dart";
 import "../harness_controller.dart";
 import "../model/run_arm.dart";
 import "../service/flow_bench.dart";
+import "../service/launch_args.dart";
 import "../service/token_api.dart";
 import "../service/url_api.dart";
 import "flow_detail_screen.dart";
@@ -47,8 +48,9 @@ class _AnalysisTabState extends State<AnalysisTab> {
   /// Product key for the flows that need one (Refer & Earn). Runtime-entered on purpose: the
   /// app keeps this in a committed .env, and it should not be copied into this repo.
   final TextEditingController _apiKey = TextEditingController(
-    // Passed at launch with --dart-define=XAPIKEY=... so the key never has to be typed on the
-    // device and never lands in the repo.
+    // --dart-define is the fallback, not the primary path: it did not survive an incremental
+    // build in practice, so the key silently arrived empty. Intent extras (see initState) are
+    // applied over the top and are the reliable route.
     text: const String.fromEnvironment("XAPIKEY"),
   );
 
@@ -61,9 +63,30 @@ class _AnalysisTabState extends State<AnalysisTab> {
   final TextEditingController _ua = TextEditingController();
 
   String _status = "Not authenticated.";
+  String _launchNote = "";
   String? _token;
   FlowBench? _bench;
   bool _running = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Extras supplied at launch win over the compiled default, and a relaunch can change them
+    // without restarting the run.
+    LaunchArgs.read().then(_applyLaunchArgs);
+    LaunchArgs.listen(_applyLaunchArgs);
+  }
+
+  void _applyLaunchArgs(LaunchArgs args) {
+    if (args.isEmpty || !mounted) return;
+    setState(() {
+      if (args.xApiKey != null) _apiKey.text = args.xApiKey!;
+      if (args.clientCode != null) _client.text = args.clientCode!;
+      if (args.userType != null) _userType.text = args.userType!;
+      if (args.appId != null) _appId.text = args.appId!;
+      _launchNote = "Configured from launch intent.";
+    });
+  }
 
   Future<void> _authenticate() async {
     setState(() => _status = "Requesting token…");
@@ -165,7 +188,7 @@ class _AnalysisTabState extends State<AnalysisTab> {
               Align(
                 alignment: Alignment.centerLeft,
                 child: Text(
-                  _status,
+                  _launchNote.isEmpty ? _status : '$_status  ·  $_launchNote',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
