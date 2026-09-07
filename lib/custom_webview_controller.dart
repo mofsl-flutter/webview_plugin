@@ -24,7 +24,20 @@ class CustomWebViewController {
   /// Generic callback for any JS channel message.
   void Function(String channelName, String message)? onJavascriptChannelMessageReceived;
   
-  /// Callback for navigation requests. Returning true allows the navigation, false blocks it.
+  /// Callback for navigation requests. Return true to allow, false to block.
+  ///
+  /// Android allows the navigation immediately and applies a `false` verdict afterwards by
+  /// calling `stopLoading()`, because `shouldOverrideUrlLoading` must answer synchronously
+  /// while this callback may not. Two consequences for implementers:
+  ///
+  ///  - **Return synchronously.** Everything awaited before returning is time the WebView
+  ///    spends loading a URL that is about to be cancelled. Awaiting an external app launch
+  ///    is long enough for the page to render.
+  ///  - **A blocked URL is still requested once.** Do not rely on `false` to keep a URL from
+  ///    being fetched at all; it stops the load, it does not prevent it.
+  ///
+  /// Non-web schemes (`upi:`, `intent:`, `tel:`, …) and PDF links are handled natively and
+  /// never reach this callback.
   FutureOr<bool> Function(String url)? onNavigationRequest;
 
   /// Internal constructor.

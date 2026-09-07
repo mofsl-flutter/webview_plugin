@@ -240,9 +240,12 @@ class WebViewMoFlutter(
      * "page ready" and acts on.
      *
      * Allowing by default keeps the original request and its context intact. A Dart veto still
-     * works, applied a moment later via `stopLoading()`; the two consumers that veto do so for
-     * URLs they never wanted rendered (a sentinel redirect, and non-web schemes that are already
-     * intercepted natively above), so a late cancel is equivalent for them.
+     * works, but it is now applied *late* — after this reply arrives — via `stopLoading()`, so a
+     * vetoed URL is briefly requested before it is cancelled. Handlers must therefore return
+     * their verdict synchronously; anything awaited first is time the WebView spends loading a
+     * page that is about to be thrown away. Non-web schemes and PDFs never reach Dart at all
+     * (they are intercepted above), but plain https URLs a consumer wants opened externally do,
+     * and awaiting the external launch before returning false was long enough to render them.
      */
     override fun onNavigationRequest(url: String): Boolean {
         activity?.runOnUiThread {
