@@ -36,6 +36,21 @@ void main() {
     );
   }
 
+  /// Delivers [method] and returns the value the controller replied with.
+  ///
+  /// Unlike [sendFromNative] this keeps the reply, because for navigation the reply *is* the
+  /// behaviour: native reads it to decide whether to veto.
+  Future<Object?> askFromNative(int viewId, String method, [Object? args]) {
+    final Completer<Object?> reply = Completer<Object?>();
+    messenger.handlePlatformMessage(
+      'custom_webview_flutter_$viewId',
+      codec.encodeMethodCall(MethodCall(method, args)),
+      (ByteData? data) =>
+          reply.complete(data == null ? null : codec.decodeEnvelope(data)),
+    );
+    return reply.future;
+  }
+
   group('dropped and dead callbacks', () {
     test('onMessageReceived is emitted by native but has no handler', () async {
       mockView(10);
@@ -176,6 +191,62 @@ void main() {
 
       messenger.setMockMethodCallHandler(
           const MethodChannel('custom_webview_flutter_30'), null);
+    });
+  });
+
+  // Unlike every group above, these pin behaviour that is CORRECT and must stay that way.
+  // Android allows a navigation immediately and applies a `false` verdict afterwards via
+  // stopLoading(), so what Dart replies decides whether a page survives.
+  group('navigation verdicts', () {
+    test('no handler replies true, so an unset callback cannot block the page', () async {
+      CustomWebViewController().setViewId(40);
+      expect(
+        await askFromNative(
+            40, 'onNavigationRequest', <String, Object?>{'url': 'https://example.com/'}),
+        isTrue,
+        reason: 'Native treats only a definite false as a veto, but it must never be handed a '
+            'reply that reads as one by accident. A consumer that sets no callback gets its '
+            'pages loaded.',
+      );
+    });
+
+    test('a false verdict is passed through unchanged, and true is not', () async {
+      final CustomWebViewController controller = CustomWebViewController()..setViewId(41);
+      final List<String> seen = <String>[];
+      controller.onNavigationRequest = (String url) {
+        seen.add(url);
+        return !url.startsWith('https://blocked.example/');
+      };
+
+      expect(
+          await askFromNative(41, 'onNavigationRequest',
+              <String, Object?>{'url': 'https://blocked.example/x'}),
+          isFalse);
+      expect(
+          await askFromNative(41, 'onNavigationRequest',
+              <String, Object?>{'url': 'https://allowed.example/x'}),
+          isTrue);
+      expect(seen, hasLength(2));
+    });
+
+    test('an async handler delays the verdict, which is why it must not await', () async {
+      final CustomWebViewController controller = CustomWebViewController()..setViewId(42);
+      controller.onNavigationRequest = (String url) async {
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+        return false;
+      };
+
+      final Stopwatch sw = Stopwatch()..start();
+      final Object? verdict = await askFromNative(
+          42, 'onNavigationRequest', <String, Object?>{'url': 'https://slow.example/'});
+      sw.stop();
+
+      expect(verdict, isFalse);
+      expect(sw.elapsedMilliseconds, greaterThanOrEqualTo(100),
+          reason: 'The verdict cannot reach native until the handler completes, and native has '
+              'already allowed the navigation by then. This delay is time the WebView spends '
+              'loading a page about to be stopped, which is why handlers must return '
+              'synchronously rather than awaiting an external launch.');
     });
   });
 }
