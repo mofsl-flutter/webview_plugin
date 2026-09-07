@@ -117,6 +117,8 @@ class Autorun {
       "\ttotal=${ms(r.totalMs)}"
       "\tstatus=${r.fetch?.statusCode ?? "-"}"
       "\tok=${r.ok}"
+      "\tnav=${r.navProbe ?? "-"}"
+      "\tstarts=${r.startCount}\tfinishes=${r.finishCount}"
       "${r.error == null ? "" : "\terr=${r.error}"}",
     );
   }

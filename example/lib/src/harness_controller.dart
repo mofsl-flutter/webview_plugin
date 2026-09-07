@@ -80,6 +80,18 @@ class HarnessController {
   double? _finished;
   double? _firstMessage;
   String? _error;
+  int _startCount = 0;
+  int _finishCount = 0;
+
+  /// How many `onPageStarted` events the current load has produced.
+  int get startCount => _startCount;
+
+  /// How many `onPageFinished` events the current load has produced.
+  ///
+  /// More than one per navigation is the signature of a cancelled load: the aborted navigation
+  /// reports finished too, and because [LoadTiming.finished] keeps only the first, that spurious
+  /// event is what a premature page time is made of.
+  int get finishCount => _finishCount;
 
   /// Notifies whenever a timing field changes.
   final ValueNotifier<LoadTiming?> timing = ValueNotifier<LoadTiming?>(null);
@@ -115,6 +127,8 @@ class HarnessController {
     _finished = null;
     _firstMessage = null;
     _error = null;
+    _startCount = 0;
+    _finishCount = 0;
     _log
       ..reset()
       ..record(EntryKind.action, "loadUrl", url);
@@ -135,6 +149,7 @@ class HarnessController {
 
   void _onPageStarted(String url) {
     _log.record(EntryKind.lifecycle, "onPageStarted", url);
+    _startCount++;
     _started ??= _now();
     _publish();
   }
@@ -143,6 +158,7 @@ class HarnessController {
     // Native emits both `onPageFinished` (with a url) and `pageLoaded` (with null arguments, so
     // the url arrives empty); the controller funnels both into this one callback.
     _log.record(EntryKind.lifecycle, "onPageFinished", url.isEmpty ? "<empty url>" : url);
+    _finishCount++;
     _finished ??= _now();
     _publish();
   }

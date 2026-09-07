@@ -31,6 +31,9 @@ class FlowResult {
     this.pageFinishedMs,
     this.url,
     this.error,
+    this.navProbe,
+    this.startCount = 0,
+    this.finishCount = 0,
   });
 
   /// Which flow.
@@ -59,6 +62,21 @@ class FlowResult {
 
   /// Why this flow produced no page timing.
   final String? error;
+
+  /// The loaded document's own navigation-timing summary, or null if it could not be read.
+  ///
+  /// Format: `redirectCount|redirectMs|type|entries|pathname`. This is the one signal that
+  /// distinguishes a redirect the WebView *followed* from one that was cancelled and refetched
+  /// as a fresh top-level load: a followed redirect leaves `redirectCount >= 1` on the final
+  /// document, a cancel-and-restart leaves 0 because the restart is a new navigation.
+  final String? navProbe;
+
+  /// `onPageStarted` events this run produced.
+  final int startCount;
+
+  /// `onPageFinished` events this run produced. More than one navigation's worth means a load
+  /// was aborted and reported finished anyway.
+  final int finishCount;
 
   /// API leg duration, 0 for the captured arm.
   double get apiMs => fetch?.totalMs ?? 0;
@@ -225,6 +243,7 @@ class FlowBench {
     }
 
     final LoadTiming? t = harness.timing.value;
+    final String? navProbe = await _probeNavTiming();
     HarnessRecorder.instance.record(
       EntryKind.action,
       "bench:${flow.id}:${arm.name}",
@@ -240,7 +259,34 @@ class FlowBench {
       pageStartedMs: t?.started,
       pageFinishedMs: t?.finished,
       error: t?.error,
+      navProbe: navProbe,
+      startCount: harness.startCount,
+      finishCount: harness.finishCount,
     );
+  }
+
+  /// Reads the loaded document's navigation-timing entry.
+  ///
+  /// Never throws: a page that blocks script, or a WebView that has already moved on, yields
+  /// null rather than failing the measurement it is only annotating.
+  Future<String?> _probeNavTiming() async {
+    const String script = "(function(){try{"
+        "var e=performance.getEntriesByType('navigation');"
+        "if(!e||!e.length)return 'none';"
+        "var n=e[0];"
+        "return [n.redirectCount,Math.round(n.redirectEnd-n.redirectStart),"
+        "n.type,e.length,location.pathname].join('|');"
+        "}catch(err){return 'err'}})()";
+    try {
+      final dynamic raw = await harness.controller.runJavaScript(script);
+      if (raw == null) {
+        return null;
+      }
+      // Android hands back the JSON encoding of the value, so a string arrives quoted.
+      return raw.toString().replaceAll('"', "");
+    } on Object {
+      return null;
+    }
   }
 
   /// Flags URLs both platforms divert to the external browser.
