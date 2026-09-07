@@ -73,7 +73,6 @@ class WebViewMoFlutter(
     private val webViewManager: WebViewManager = WebViewManager(context, activity, plugin)
     private val webView: WebView = webViewManager.getOrCreateWebView()
     private val methodChannel: MethodChannel = MethodChannel(messenger, "custom_webview_flutter_$viewId")
-    private var isReloadingFromDart = false
 
     init {
         methodChannel.setMethodCallHandler(this)
@@ -223,25 +222,43 @@ class WebViewMoFlutter(
         )
     }
 
+    /**
+     * Notifies Dart of a navigation and allows it immediately.
+     *
+     * `shouldOverrideUrlLoading` has to answer synchronously and Dart is asynchronous, so this
+     * previously cancelled *every* http/https navigation, asked Dart, and then re-issued the URL
+     * with a bare `loadUrl()`. Three things were wrong with that:
+     *
+     *  - the in-flight main-frame response was discarded and refetched from scratch, so a page
+     *    with one redirect paid two full loads;
+     *  - every hop cost a platform-channel round trip, queued behind whatever the Dart UI thread
+     *    was doing, to obtain a verdict every known consumer answers with a constant;
+     *  - the re-issue lost request context — extra headers were dropped, and a 307/308 redirect
+     *    was replayed as a GET.
+     *
+     * It also produced a spurious `onPageFinished` for the aborted load, which host code reads as
+     * "page ready" and acts on.
+     *
+     * Allowing by default keeps the original request and its context intact. A Dart veto still
+     * works, applied a moment later via `stopLoading()`; the two consumers that veto do so for
+     * URLs they never wanted rendered (a sentinel redirect, and non-web schemes that are already
+     * intercepted natively above), so a late cancel is equivalent for them.
+     */
     override fun onNavigationRequest(url: String): Boolean {
-        if (isReloadingFromDart) {
-            isReloadingFromDart = false
-            return true
-        }
-
         activity?.runOnUiThread {
             methodChannel.invokeMethod("onNavigationRequest", mapOf("url" to url), object : MethodChannel.Result {
                 override fun success(result: Any?) {
-                    if (result as? Boolean == true) {
-                        isReloadingFromDart = true
-                        webViewManager.webView?.loadUrl(url)
+                    // Only a definite `false` vetoes. A null reply — no handler registered on the
+                    // Dart side — must not cancel the page.
+                    if (result as? Boolean == false) {
+                        webViewManager.webView?.stopLoading()
                     }
                 }
                 override fun error(errorCode: String, errorMessage: String?, errorDetails: Any?) {}
                 override fun notImplemented() {}
             })
         }
-        return false
+        return true
     }
 
     override fun onPageStarted(url: String) {
