@@ -235,6 +235,23 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         completionHandler()
     }
 
+    // JS can postMessage() anything (null/undefined, a raw byte array, an
+    // unsupported type) — JSONSerialization.data(withJSONObject:) raises an
+    // uncatchable Objective-C exception (not a Swift Error, so `try?` does not
+    // protect against it) for values it can't encode. isValidJSONObject is the
+    // Apple-documented way to check first without risking that crash.
+    static func stringifyMessageBody(_ body: Any) -> String {
+        if let stringBody = body as? String {
+            return stringBody
+        }
+        guard JSONSerialization.isValidJSONObject(body),
+              let bodyData = try? JSONSerialization.data(withJSONObject: body, options: []),
+              let bodyString = String(data: bodyData, encoding: .utf8) else {
+            return ""
+        }
+        return bodyString
+    }
+
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
         print("Message received: \(message.name)")
 
@@ -248,13 +265,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
             return
         }
 
-        var messageString = ""
-        if let body = message.body as? String {
-            messageString = body
-        } else if let bodyData = try? JSONSerialization.data(withJSONObject: message.body, options: []),
-                  let bodyString = String(data: bodyData, encoding: .utf8) {
-            messageString = bodyString
-        }
+        let messageString = Self.stringifyMessageBody(message.body)
 
         NSLog("%@", "[JSChannel] \(message.name): \(messageString.prefix(500))")
 
