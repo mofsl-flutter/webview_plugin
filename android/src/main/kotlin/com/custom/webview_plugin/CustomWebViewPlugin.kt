@@ -31,6 +31,7 @@ class CustomWebViewPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCa
     override fun onAttachedToEngine(flutterPluginBinding: FlutterPlugin.FlutterPluginBinding) {
         this.flutterPluginBinding = flutterPluginBinding
         context = flutterPluginBinding.applicationContext
+        WebViewLog.init(context)
 
         methodChannel =
             MethodChannel(flutterPluginBinding.binaryMessenger, "custom_webview_flutter").apply {
@@ -83,7 +84,7 @@ class CustomWebViewPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCa
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
-        Log.d("CustomWebViewPlugin", "onDetachedFromEngine")
+        WebViewLog.d { "onDetachedFromEngine" }
         methodChannel.setMethodCallHandler(null)
     }
 

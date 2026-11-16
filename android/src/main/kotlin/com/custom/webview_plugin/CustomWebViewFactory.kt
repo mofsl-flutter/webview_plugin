@@ -202,7 +202,7 @@ class WebViewMoFlutter(
     }
 
     override fun dispose() {
-        Log.d("CustomWebViewPlugin", "dispose")
+        WebViewLog.d { "dispose" }
         methodChannel.setMethodCallHandler(null)
         webViewManager.destroyWebView()
     }
@@ -298,6 +298,9 @@ class WebViewManager(
     private val configuredJavaScriptChannels: MutableSet<String> = mutableSetOf()
     private var isWebViewPaused: Boolean = false
 
+    // Off-main-thread work for downloads (data: URI decode + file write).
+    private val ioExecutor: java.util.concurrent.Executor = WebViewIo.executor
+
     // Fullscreen HTML5 <video> support (e.g. Learning Hub videos). Without these,
     // WebView has no native view to expand into when a page's video player requests
     // fullscreen, so the fullscreen button silently does nothing.
@@ -326,13 +329,12 @@ class WebViewManager(
             configuredJavaScriptChannels.clear()
             val webViewContext = currentActivityContext()
             // TODO(coloros-select-crash): remove after on-device verification on Oppo/Vivo/OnePlus.
-            Log.d(
-                "CustomWebViewPlugin",
+            WebViewLog.d {
                 "WebView ctx=${webViewContext.javaClass.simpleName} " +
                     "isActivity=${webViewContext is Activity} " +
                     "activityHash=${(webViewContext as? Activity)?.hashCode()} " +
                     "pluginActivityHash=${plugin.activeActivity?.hashCode()}"
-            )
+            }
             webView = WebView(webViewContext).apply {
                 settings.javaScriptEnabled = true
                 settings.domStorageEnabled = true
@@ -349,15 +351,23 @@ class WebViewManager(
                 // throws IllegalArgumentException and crashes the app if unguarded.
                 try {
                     when {
-                        url.startsWith("data:") -> saveDataUri(url, mimeType)
+                        // Decoding a data: URI and writing it out is file I/O; this listener
+                        // runs on the main thread, so a large payload would jank or ANR.
+                        url.startsWith("data:") -> ioExecutor.execute {
+                            try {
+                                saveDataUri(url, mimeType)
+                            } catch (e: Exception) {
+                                WebViewLog.e("data: URI download failed", e)
+                            }
+                        }
                         url.startsWith("blob:") -> downloadBlobUrl(url)
                         URLUtil.isHttpUrl(url) || URLUtil.isHttpsUrl(url) ->
                             enqueueDownload(url, userAgent, contentDisposition, mimeType)
                         else ->
-                            Log.w("CustomWebViewPlugin", "Unsupported download scheme: $url")
+                            WebViewLog.w("Unsupported download scheme: ${WebViewLog.url(url)}")
                     }
                 } catch (e: Exception) {
-                    Log.e("CustomWebViewPlugin", "Download failed for $url", e)
+                    WebViewLog.e("Download failed for ${WebViewLog.url(url)}", e)
                 }
             }
         }
@@ -372,11 +382,11 @@ class WebViewManager(
             }
 
             override fun onConsoleMessage(consoleMessage: ConsoleMessage): Boolean {
-                Log.d(
-                    "CustomWebViewPlugin",
+                // Page console output is for debugging only; pages can log tokens and PII.
+                WebViewLog.d {
                     "WebViewConsole: ${consoleMessage.message()} at " +
                         "${consoleMessage.sourceId()}:${consoleMessage.lineNumber()}"
-                )
+                }
                 return true
             }
 
@@ -590,7 +600,7 @@ class WebViewManager(
             ): Boolean {
                 val url = request?.url.toString()
                 val scheme = request?.url?.scheme?.lowercase() ?: ""
-                Log.d("CustomWebViewPlugin", "shouldOverrideUrlLoading === $url")
+                WebViewLog.d { "shouldOverrideUrlLoading === $url" }
 
                 // Handle all non-web schemes natively BEFORE the Dart round-trip.
                 // Covers upi:, intent:, tel:, mailto:, sms:, market:, whatsapp:, etc.
@@ -667,7 +677,7 @@ class WebViewManager(
     private fun saveDataUri(dataUri: String, fallbackMimeType: String) {
         val commaIndex = dataUri.indexOf(',')
         if (commaIndex < 0) {
-            Log.w("CustomWebViewPlugin", "Malformed data URI, no payload found")
+            WebViewLog.w("Malformed data URI, no payload found")
             return
         }
         val header = dataUri.substring(0, commaIndex) // data:[<mediatype>][;base64]
@@ -721,7 +731,7 @@ class WebViewManager(
                 val mime = mimeType.ifBlank { "application/octet-stream" }
                 saveBytesToDownloads(bytes, buildDownloadFileName(mime), mime)
             } catch (e: Exception) {
-                Log.e("CustomWebViewPlugin", "Blob download failed", e)
+                WebViewLog.e("Blob download failed", e)
             }
         }
     }
@@ -741,7 +751,7 @@ class WebViewManager(
             }
             val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
             if (uri == null) {
-                Log.e("CustomWebViewPlugin", "Failed to create MediaStore entry for $fileName")
+                WebViewLog.e("Failed to create MediaStore entry for $fileName")
                 return
             }
             resolver.openOutputStream(uri)?.use { it.write(bytes) }
@@ -754,7 +764,7 @@ class WebViewManager(
             if (!downloadsDir.exists()) downloadsDir.mkdirs()
             FileOutputStream(File(downloadsDir, fileName)).use { it.write(bytes) }
         }
-        Log.d("CustomWebViewPlugin", "Saved download $fileName ($mimeType, ${bytes.size} bytes)")
+        WebViewLog.d { "Saved download $fileName ($mimeType, ${bytes.size} bytes)" }
         Handler(Looper.getMainLooper()).post {
             Toast.makeText(context, "Downloaded $fileName", Toast.LENGTH_SHORT).show()
         }
@@ -783,7 +793,7 @@ class WebViewManager(
         headers: Map<String, String>? = null,
         disableCache: Boolean = false
     ) {
-        Log.d("CustomWebViewPlugin", "loadURL : $urlString disableCache=$disableCache")
+        WebViewLog.d { "loadURL : $urlString disableCache=$disableCache" }
         applyCacheMode(disableCache)
         if (urlString.isNotEmpty()) {
             javaScriptChannelNames.forEach { addJavascriptChannel(it) }
@@ -833,7 +843,7 @@ class WebViewManager(
 
     fun addJavascriptChannel(name: String): Boolean {
         if (configuredJavaScriptChannels.contains(name)) return false
-        Log.d("CustomWebViewPlugin", "addJavascriptChannel === $name")
+        WebViewLog.d { "addJavascriptChannel === $name" }
         webView?.addJavascriptInterface(object : Any() {
             @JavascriptInterface
             fun postMessage(message: String) {
@@ -870,22 +880,22 @@ class WebViewManager(
                     if (!fallbackUrl.isNullOrEmpty()) {
                         webView?.loadUrl(fallbackUrl)
                     } else {
-                        Log.w("CustomWebViewPlugin", "No app for intent and no fallback: $url")
+                        WebViewLog.w("No app for intent and no fallback: ${WebViewLog.url(url)}")
                     }
                 } else {
-                    Log.w("CustomWebViewPlugin", "No app found for scheme '$scheme': $url")
+                    WebViewLog.w("No app found for scheme '$scheme': ${WebViewLog.url(url)}")
                 }
             }
             true
         } catch (e: Exception) {
-            Log.e("CustomWebViewPlugin", "Failed to handle scheme '$scheme': $url", e)
+            WebViewLog.e("Failed to handle scheme '$scheme': ${WebViewLog.url(url)}", e)
             true
         }
     }
 
     fun destroyWebView() {
         isWebViewPaused = true
-        Log.d("CustomWebViewPlugin", "destroyWebView")
+        WebViewLog.d { "destroyWebView" }
         if (fullscreenView != null) hideFullscreenView()
         webView?.destroy()
         webView = null

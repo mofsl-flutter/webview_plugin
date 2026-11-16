@@ -3,6 +3,15 @@ import UIKit
 import WebKit
 import UniformTypeIdentifiers
 
+/// Debug-only logging. URLs and JS channel payloads carry session tokens, so nothing is
+/// logged in release builds. The message is only built in debug builds.
+@inline(__always)
+func webViewLog(_ message: @autoclosure () -> String) {
+    #if DEBUG
+    NSLog("%@", message())
+    #endif
+}
+
 public class CustomWebViewPlugin: NSObject, FlutterPlugin {
     public static func register(with registrar: FlutterPluginRegistrar) {
         let channel = FlutterMethodChannel(name: "custom_webview_flutter", binaryMessenger: registrar.messenger())
@@ -69,6 +78,9 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
     // what left window.open() callers on the JS side holding a dead reference.
     private var popupWebView: WKWebView?
     private weak var popupNavigationController: UINavigationController?
+    // The zoom-disable script is a user script, which applies to every later load; adding it
+    // on each loadURL stacked identical copies.
+    private var zoomDisableScriptAdded = false
 
     override init() {
         super.init()
@@ -102,16 +114,16 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
     func loadURL(_ urlString: String, _ isFromChart: Bool, withJavaScriptChannels channelNames: [String], zoomEnabled: Bool, headers: [String: String]? = nil) {
         isChart = isFromChart
         configureZoom(enabled: zoomEnabled)
-        print("Received loadURL isChart: \(isChart), zoomEnabled: \(zoomEnabled)")
+        webViewLog("Received loadURL isChart: \(isChart), zoomEnabled: \(zoomEnabled)")
         guard let url = URL(string: urlString), isValidURL(url) else {
             delegate?.onPageLoadError()
-            print("Invalid URL provided, loading default URL.")
+            webViewLog("Invalid URL provided, loading default URL.")
             return
         }
 
         channelNames.forEach { _ = addJavascriptChannel(name: $0) }
 
-        print("Loading URL: \(urlString)")
+        webViewLog("Loading URL: \(urlString)")
         var request = URLRequest(url: url)
         if let headers = headers {
             for (key, value) in headers {
@@ -123,7 +135,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
     }
 
     func loadHtmlData(htmlString: String, baseURL: URL?, javaScriptChannelNames: [String]) {
-        print("Loading HTML data...")
+        webViewLog("Loading HTML data...")
 
         javaScriptChannelNames.forEach { _ = addJavascriptChannel(name: $0) }
 
@@ -140,9 +152,10 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         webView?.scrollView.isScrollEnabled = true
         webView?.scrollView.pinchGestureRecognizer?.isEnabled = enabled
 
-        if !enabled {
+        if !enabled && !zoomDisableScriptAdded {
             let zoomDisableScript = getZoomDisableScript()
             webView?.configuration.userContentController.addUserScript(zoomDisableScript)
+            zoomDisableScriptAdded = true
         }
     }
 
@@ -197,7 +210,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
         let source = webView === popupWebView ? "POPUP" : (webView === self.webView ? "MAIN" : "OTHER")
-        NSLog("%@", "[\(source)] Started Loading: \(String(describing: webView.url))")
+        webViewLog("[\(source)] Started Loading: \(String(describing: webView.url))")
         if let url = webView.url?.absoluteString {
             delegate?.onPageStarted(url: url)
         }
@@ -205,7 +218,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         let source = webView === popupWebView ? "POPUP" : (webView === self.webView ? "MAIN" : "OTHER")
-        NSLog("%@", "[\(source)] Finished Loading: \(String(describing: webView.url))")
+        webViewLog("[\(source)] Finished Loading: \(String(describing: webView.url))")
         if let url = webView.url?.absoluteString {
             delegate?.onPageFinished(url: url)
         }
@@ -213,23 +226,23 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
         let source = webView === popupWebView ? "POPUP" : (webView === self.webView ? "MAIN" : "OTHER")
-        NSLog("%@", "[\(source)] Error loading page (provisional): \(error.localizedDescription)")
+        webViewLog("[\(source)] Error loading page (provisional): \(error.localizedDescription)")
         delegate?.onReceivedError(message: error.localizedDescription)
     }
 
     func webView(_ webView: WKWebView, didFail navigation: WKNavigation!, withError error: Error) {
         let source = webView === popupWebView ? "POPUP" : (webView === self.webView ? "MAIN" : "OTHER")
-        NSLog("%@", "[\(source)] Error loading page (committed): \(error.localizedDescription)")
+        webViewLog("[\(source)] Error loading page (committed): \(error.localizedDescription)")
         delegate?.onReceivedError(message: error.localizedDescription)
     }
 
     func webView(_ webView: WKWebView, didReceive serverRedirectForProvisionalNavigation: WKNavigation!) {
         let source = webView === popupWebView ? "POPUP" : (webView === self.webView ? "MAIN" : "OTHER")
-        NSLog("%@", "[\(source)] Redirect detected.")
+        webViewLog("[\(source)] Redirect detected.")
     }
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo, completionHandler: @escaping () -> Void) {
-        print("JavaScript Alert: \(message)")
+        webViewLog("JavaScript Alert: \(message)")
         let url = webView.url?.absoluteString ?? ""
         delegate?.onJsAlert(url: url, message: message)
         completionHandler()
@@ -253,7 +266,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-        print("Message received: \(message.name)")
+        webViewLog("Message received: \(message.name)")
 
         if message.name == Self.blobDownloaderChannelName {
             handleBlobDownloadMessage(message.body)
@@ -267,7 +280,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
         let messageString = Self.stringifyMessageBody(message.body)
 
-        NSLog("%@", "[JSChannel] \(message.name): \(messageString.prefix(500))")
+        webViewLog("[JSChannel] \(message.name): \(messageString.prefix(500))")
 
         if configuredJavaScriptChannels.contains(message.name) {
             delegate?.onJavascriptChannelMessageReceived(channelName: message.name, message: messageString)
@@ -288,15 +301,15 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
             } else {
                 targetFrameDesc = "nil(new-window-request)"
             }
-            NSLog("%@", "[CustomWebView][\(source)] navigation request (\(scheme ?? "nil")) type=\(navigationAction.navigationType.rawValue) targetFrame=\(targetFrameDesc): \(url.absoluteString.prefix(200))")
+            webViewLog("[CustomWebView][\(source)] navigation request (\(scheme ?? "nil")) type=\(navigationAction.navigationType.rawValue) targetFrame=\(targetFrameDesc): \(url.absoluteString.prefix(200))")
             if scheme == "blob" {
-                NSLog("%@", "[BlobDownload] intercepted blob URL, injecting fetch script")
+                webViewLog("[BlobDownload] intercepted blob URL, injecting fetch script")
                 decisionHandler(.cancel)
                 downloadBlobUrl(url.absoluteString)
                 return
             }
             if scheme == "data" {
-                NSLog("%@", "[BlobDownload] intercepted data URL, decoding natively")
+                webViewLog("[BlobDownload] intercepted data URL, decoding natively")
                 decisionHandler(.cancel)
                 saveDataUrl(url)
                 return
@@ -305,7 +318,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
             // Allow blocking from Dart
             delegate?.onNavigationRequest(url: url.absoluteString) { allow in
                 if !allow {
-                    NSLog("%@", "[CustomWebView][\(source)] decision: CANCEL (onNavigationRequest denied)")
+                    webViewLog("[CustomWebView][\(source)] decision: CANCEL (onNavigationRequest denied)")
                     decisionHandler(.cancel)
                     return
                 }
@@ -313,7 +326,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
                 // Check if the URL is a file link or special scheme
                 if url.absoluteString.contains(".pdf") || url.absoluteString.contains("SH=") || url.isFileURL {
                     // Open the URL in an external browser
-                    NSLog("%@", "[CustomWebView][\(source)] decision: CANCEL (pdf/SH/file -> external)")
+                    webViewLog("[CustomWebView][\(source)] decision: CANCEL (pdf/SH/file -> external)")
                     UIApplication.shared.open(url, options: [:], completionHandler: nil)
                     decisionHandler(.cancel) // Cancel the navigation in WebView
                     return
@@ -324,13 +337,13 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
                 let webSchemes: Set<String> = ["http", "https", "file", "data", "blob", "javascript", "about"]
                 let requestedScheme = url.scheme?.lowercased() ?? ""
                 if !requestedScheme.isEmpty && !webSchemes.contains(requestedScheme) {
-                    NSLog("%@", "[CustomWebView][\(source)] decision: CANCEL (non-web scheme -> external)")
+                    webViewLog("[CustomWebView][\(source)] decision: CANCEL (non-web scheme -> external)")
                     UIApplication.shared.open(url, options: [:], completionHandler: nil)
                     decisionHandler(.cancel)
                     return
                 }
 
-                NSLog("%@", "[CustomWebView][\(source)] decision: ALLOW")
+                webViewLog("[CustomWebView][\(source)] decision: ALLOW")
                 decisionHandler(.allow) // Allow navigation for other URLs
             }
             return
@@ -340,19 +353,19 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
-        NSLog("%@", "[Popup] createWebViewWith invoked, url=\(navigationAction.request.url?.absoluteString ?? "nil")")
+        webViewLog("[Popup] createWebViewWith invoked, url=\(navigationAction.request.url?.absoluteString ?? "nil")")
         guard let url = navigationAction.request.url else { return nil }
 
         // window.open on a blob/data URL is a download, not a popup — a popup
         // webview cannot load a blob URL (silent no-op), so download instead.
         let scheme = url.scheme?.lowercased()
         if scheme == "blob" {
-            NSLog("%@", "[BlobDownload] intercepted blob URL from window.open")
+            webViewLog("[BlobDownload] intercepted blob URL from window.open")
             downloadBlobUrl(url.absoluteString)
             return nil
         }
         if scheme == "data" {
-            NSLog("%@", "[BlobDownload] intercepted data URL from window.open")
+            webViewLog("[BlobDownload] intercepted data URL from window.open")
             saveDataUrl(url)
             return nil
         }
@@ -397,7 +410,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
     // WebView inside an AlertDialog that the dialog itself keeps alive.
     private func presentPopupWebView(_ popup: WKWebView) {
         guard let rootVC = UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
-            NSLog("%@", "[Popup] no key window / root view controller found to present popup")
+            webViewLog("[Popup] no key window / root view controller found to present popup")
             return
         }
         var topVC = rootVC
@@ -508,31 +521,31 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         """
         webView.evaluateJavaScript(script) { [weak self] _, error in
             if let error = error {
-                NSLog("%@", "[BlobDownload] fetch script injection FAILED: \(error)")
+                webViewLog("[BlobDownload] fetch script injection FAILED: \(error)")
                 self?.delegate?.onReceivedError(message: "Blob download failed: \(error.localizedDescription)")
             } else {
-                NSLog("%@", "[BlobDownload] fetch script injected, waiting for blob data")
+                webViewLog("[BlobDownload] fetch script injected, waiting for blob data")
             }
         }
     }
 
     private func handleBlobDownloadMessage(_ body: Any) {
         guard let dict = body as? [String: Any] else {
-            NSLog("%@", "[BlobDownload] unexpected message body: \(type(of: body))")
+            webViewLog("[BlobDownload] unexpected message body: \(type(of: body))")
             delegate?.onReceivedError(message: "Blob download failed: unexpected message format")
             return
         }
         if let jsError = dict["error"] as? String {
-            NSLog("%@", "[BlobDownload] JS reported error: \(jsError)")
+            webViewLog("[BlobDownload] JS reported error: \(jsError)")
             delegate?.onReceivedError(message: jsError)
             return
         }
         guard let base64 = dict["base64"] as? String, !base64.isEmpty else {
-            NSLog("%@", "[BlobDownload] empty base64 payload")
+            webViewLog("[BlobDownload] empty base64 payload")
             delegate?.onReceivedError(message: "Blob download failed: empty payload")
             return
         }
-        NSLog("%@", "[BlobDownload] received blob data: \(base64.count) base64 chars, mime=\(dict["mimeType"] ?? "?")")
+        webViewLog("[BlobDownload] received blob data: \(base64.count) base64 chars, mime=\(dict["mimeType"] ?? "?")")
         let mimeType = (dict["mimeType"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "application/octet-stream"
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let data = Data(base64Encoded: base64, options: .ignoreUnknownCharacters) else {
@@ -551,18 +564,18 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
     // but a flat { base64, filename } payload is accepted too.
     private func handleDownloadHandlerMessage(_ body: Any) {
         guard let dict = body as? [String: Any] else {
-            NSLog("%@", "[BlobDownload] downloadHandler: unexpected payload type \(type(of: body))")
+            webViewLog("[BlobDownload] downloadHandler: unexpected payload type \(type(of: body))")
             delegate?.onReceivedError(message: "Download failed: unexpected downloadHandler payload")
             return
         }
         let payload = dict["data"] as? [String: Any] ?? dict
         guard let base64 = payload["base64"] as? String, !base64.isEmpty else {
-            NSLog("%@", "[BlobDownload] downloadHandler: no base64 in payload, keys=\(Array(dict.keys))")
+            webViewLog("[BlobDownload] downloadHandler: no base64 in payload, keys=\(Array(dict.keys))")
             delegate?.onReceivedError(message: "Download failed: downloadHandler payload has no base64 data")
             return
         }
         let fileName = (payload["filename"] as? String).flatMap { $0.isEmpty ? nil : $0 }
-        NSLog("%@", "[BlobDownload] downloadHandler: received \(base64.count) base64 chars, filename=\(fileName ?? "nil")")
+        webViewLog("[BlobDownload] downloadHandler: received \(base64.count) base64 chars, filename=\(fileName ?? "nil")")
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             // Accept both a plain base64 string and a full data URI.
             var raw = base64
@@ -632,7 +645,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         let tempURL = FileManager.default.temporaryDirectory.appendingPathComponent(fileName)
         do {
             try data.write(to: tempURL, options: .atomic)
-            NSLog("%@", "[BlobDownload] wrote \(data.count) bytes to \(tempURL.path)")
+            webViewLog("[BlobDownload] wrote \(data.count) bytes to \(tempURL.path)")
         } catch {
             DispatchQueue.main.async { [weak self] in
                 self?.delegate?.onReceivedError(message: "Download failed: could not write file (\(error.localizedDescription))")
@@ -645,9 +658,9 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
     }
 
     private func presentDownloadedFile(at fileURL: URL) {
-        NSLog("%@", "[BlobDownload] presenting save dialog for \(fileURL.lastPathComponent)")
+        webViewLog("[BlobDownload] presenting save dialog for \(fileURL.lastPathComponent)")
         guard let rootVC = UIApplication.shared.windows.first(where: { $0.isKeyWindow })?.rootViewController else {
-            NSLog("%@", "[BlobDownload] no key window / root view controller found")
+            webViewLog("[BlobDownload] no key window / root view controller found")
             delegate?.onReceivedError(message: "Download failed: no view controller to present from")
             return
         }
