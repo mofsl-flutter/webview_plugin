@@ -30,7 +30,19 @@ class WebViewMoFlutter: NSObject, FlutterPlatformView, WebViewControllerDelegate
         super.init()
         
         self.webViewManager.delegate = self
-        self.methodChannel.setMethodCallHandler(self.handle)
+        // Weak capture: the messenger keeps this handler for as long as it is registered, and a
+        // strong `self.handle` kept the platform view (and its WebViewManager and WKWebView)
+        // alive after Flutter disposed it.
+        self.methodChannel.setMethodCallHandler { [weak self] call, result in
+            // View already freed: answer like a no-op call. Returning NotImplemented would
+            // surface as MissingPluginException in Dart callers that touch a closed screen's
+            // controller, where the leaked view used to answer silently.
+            guard let self = self else {
+                result(nil)
+                return
+            }
+            self.handle(call, result: result)
+        }
 
         // Process creation arguments
         if let argsDict = args as? [String: Any] {
@@ -52,6 +64,10 @@ class WebViewMoFlutter: NSObject, FlutterPlatformView, WebViewControllerDelegate
        if #available(iOS 16.4,*) {
            self.webViewManager.webView.isInspectable = true
        }
+    }
+
+    deinit {
+        methodChannel.setMethodCallHandler(nil)
     }
 
     func view() -> UIView {

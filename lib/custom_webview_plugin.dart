@@ -33,6 +33,7 @@ class CustomWebViewWidget extends StatefulWidget {
     this.isChart = true,
     this.zoomEnabled = true,
     this.enableMultipleWindows = true,
+    this.cleanTeardown = false,
   });
 
   /// The controller that manages this web view.
@@ -56,6 +57,12 @@ class CustomWebViewWidget extends StatefulWidget {
   /// Whether multiple windows support is enabled.
   final bool enableMultipleWindows;
 
+  /// Android: when the view is disposed, release the WebView's references (stop loading, remove
+  /// JS interfaces, clients and download listener, detach from the parent) before destroying it,
+  /// so its memory can be reclaimed as soon as the screen closes. Opt-in; defaults to the
+  /// previous behaviour (destroy only). Read at creation time. No effect on iOS.
+  final bool cleanTeardown;
+
   @override
   State<CustomWebViewWidget> createState() => _CustomWebViewWidgetState();
 }
@@ -71,6 +78,7 @@ class _CustomWebViewWidgetState extends State<CustomWebViewWidget> {
       "isChart": widget.isChart,
       "zoomEnabled": widget.zoomEnabled,
       "enableMultipleWindows": widget.enableMultipleWindows,
+      "cleanTeardown": widget.cleanTeardown,
     };
 
     if (defaultTargetPlatform == TargetPlatform.android) {

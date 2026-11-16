@@ -45,6 +45,25 @@ public class CustomWebViewPlugin: NSObject, FlutterPlugin {
     }
 }
 
+/// Forwards script messages to a handler it does not retain.
+///
+/// `WKUserContentController.add(_:name:)` keeps a strong reference to the handler. Passing the
+/// WebViewManager directly made a cycle (manager -> webView -> configuration ->
+/// userContentController -> manager), so a closed webview's WKWebView and its page were never
+/// freed: one leaked WKWebView per open.
+final class WeakScriptMessageHandler: NSObject, WKScriptMessageHandler {
+    private weak var target: WKScriptMessageHandler?
+
+    init(_ target: WKScriptMessageHandler) {
+        self.target = target
+        super.init()
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        target?.userContentController(userContentController, didReceive: message)
+    }
+}
+
 public protocol WebViewControllerDelegate: AnyObject {
     func pageDidLoad(url: String)
     func sendMessageBody(body: String)
@@ -92,8 +111,8 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
         webView.uiDelegate = self
         webView.navigationDelegate = self
         _ = addJavascriptChannel(name: "ChartAppDelegate")
-        webView.configuration.userContentController.add(self, name: Self.blobDownloaderChannelName)
-        webView.configuration.userContentController.add(self, name: Self.downloadHandlerChannelName)
+        webView.configuration.userContentController.add(WeakScriptMessageHandler(self), name: Self.blobDownloaderChannelName)
+        webView.configuration.userContentController.add(WeakScriptMessageHandler(self), name: Self.downloadHandlerChannelName)
 
         setupProgressObserver()
     }
@@ -107,8 +126,14 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
 
     deinit {
         progressObserver?.invalidate()
-        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.blobDownloaderChannelName)
-        webView?.configuration.userContentController.removeScriptMessageHandler(forName: Self.downloadHandlerChannelName)
+        let controller = webView?.configuration.userContentController
+        controller?.removeScriptMessageHandler(forName: Self.blobDownloaderChannelName)
+        controller?.removeScriptMessageHandler(forName: Self.downloadHandlerChannelName)
+        // JS channels added through addJavascriptChannel (incl. ChartAppDelegate).
+        for name in configuredJavaScriptChannels {
+            controller?.removeScriptMessageHandler(forName: name)
+        }
+        webView?.stopLoading()
     }
 
     func loadURL(_ urlString: String, _ isFromChart: Bool, withJavaScriptChannels channelNames: [String], zoomEnabled: Bool, headers: [String: String]? = nil) {
@@ -188,7 +213,7 @@ class WebViewManager: NSObject, WKUIDelegate, WKNavigationDelegate, WKScriptMess
             forMainFrameOnly: true
         )
         webView.configuration.userContentController.addUserScript(wrapperScript)
-        webView.configuration.userContentController.add(self, name: name)
+        webView.configuration.userContentController.add(WeakScriptMessageHandler(self), name: name)
         configuredJavaScriptChannels.insert(name)
         return true
     }

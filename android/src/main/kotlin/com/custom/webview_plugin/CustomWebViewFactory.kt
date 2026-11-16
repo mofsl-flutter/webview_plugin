@@ -85,6 +85,7 @@ class WebViewMoFlutter(
             val zoomEnabled = args["zoomEnabled"] as? Boolean ?: true
             val multipleWindows = args["enableMultipleWindows"] as? Boolean ?: true
             val disableCache = args["disableCache"] as? Boolean ?: false
+            webViewManager.cleanTeardown = args["cleanTeardown"] as? Boolean ?: false
 
             webViewManager.enableZoom(zoomEnabled)
             webViewManager.enableMultipleWindows(multipleWindows)
@@ -292,6 +293,15 @@ class WebViewManager(
     private val activity: Activity?,
     private val plugin: CustomWebViewPlugin
 ) {
+
+    /**
+     * Opt-in (creation param `cleanTeardown`, default false): release the WebView's references
+     * before destroy() — stop loading, drop JS interfaces, clients and the download listener,
+     * detach it from its parent — so the page, its renderer resources and the objects the
+     * bridges point at can be freed as soon as the screen closes. Off by default until the
+     * memory gain is measured (R9: memory still held after Back).
+     */
+    var cleanTeardown: Boolean = false
 
     var delegate: WebViewControllerDelegate? = null
     var webView: WebView? = null
@@ -897,8 +907,29 @@ class WebViewManager(
         isWebViewPaused = true
         WebViewLog.d { "destroyWebView" }
         if (fullscreenView != null) hideFullscreenView()
+        if (cleanTeardown) releaseWebViewReferences()
         webView?.destroy()
         webView = null
+    }
+
+    private fun releaseWebViewReferences() {
+        val wv = webView ?: return
+        try {
+            wv.stopLoading()
+            wv.setDownloadListener(null)
+            (configuredJavaScriptChannels + "CustomBlobDownloader").forEach {
+                wv.removeJavascriptInterface(it)
+            }
+            configuredJavaScriptChannels.clear()
+            wv.webChromeClient = null
+            wv.webViewClient = WebViewClient()
+            (wv.parent as? ViewGroup)?.removeView(wv)
+            wv.removeAllViews()
+        } catch (e: Exception) {
+            WebViewLog.e("Releasing WebView references failed", e)
+        }
+        // No more callbacks into the closed screen's channel.
+        delegate = null
     }
 
     fun resumeWebView() {
