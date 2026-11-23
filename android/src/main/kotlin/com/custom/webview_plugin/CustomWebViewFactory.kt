@@ -35,6 +35,7 @@ import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -610,7 +611,7 @@ class WebViewManager(
             ): Boolean {
                 val url = request?.url.toString()
                 val scheme = request?.url?.scheme?.lowercase() ?: ""
-                WebViewLog.d { "shouldOverrideUrlLoading === $url" }
+                WebViewLog.d { "shouldOverrideUrlLoading === ${WebViewLog.url(url)}" }
 
                 // Handle all non-web schemes natively BEFORE the Dart round-trip.
                 // Covers upi:, intent:, tel:, mailto:, sms:, market:, whatsapp:, etc.
@@ -639,11 +640,31 @@ class WebViewManager(
             ) {
                 super.onReceivedError(view, request, error)
                 if (request?.isForMainFrame != true) return
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    WebViewLog.w(
+                        "Page load error ${error?.errorCode} ${error?.description} " +
+                            "for ${WebViewLog.url(request.url?.toString())}"
+                    )
+                }
 
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     error?.let { delegate?.onReceivedError(it.description.toString()) }
                 } else {
                     delegate?.onReceivedError("error")
+                }
+            }
+
+            override fun onReceivedHttpError(
+                view: WebView?,
+                request: WebResourceRequest?,
+                errorResponse: WebResourceResponse?
+            ) {
+                super.onReceivedHttpError(view, request, errorResponse)
+                // Log only: main-frame HTTP errors (4xx/5xx) are a common cause of blank pages.
+                if (request?.isForMainFrame == true) {
+                    WebViewLog.w(
+                        "HTTP ${errorResponse?.statusCode} for ${WebViewLog.url(request.url?.toString())}"
+                    )
                 }
             }
 
@@ -653,6 +674,7 @@ class WebViewManager(
                 // (Google Play "Unsafe Implementation of WebView SSL Error Handler").
                 // Cancel the load and surface the failure to Dart.
                 handler?.cancel()
+                WebViewLog.w("SSL error ${error?.primaryError} for ${WebViewLog.url(error?.url)}")
                 delegate?.onReceivedError("SSL certificate error: ${error?.primaryError}")
             }
         }
@@ -752,8 +774,11 @@ class WebViewManager(
     }
 
     private fun saveBytesToDownloads(bytes: ByteArray, fileName: String, mimeType: String) {
+        // Runs on a background thread and can finish after the screen's Activity is gone, so use
+        // the application context, never the Activity the WebView was created with.
+        val appContext = context.applicationContext
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
-            val resolver = context.contentResolver
+            val resolver = appContext.contentResolver
             val values = ContentValues().apply {
                 put(MediaStore.Downloads.DISPLAY_NAME, fileName)
                 put(MediaStore.Downloads.MIME_TYPE, mimeType)
@@ -776,7 +801,7 @@ class WebViewManager(
         }
         WebViewLog.d { "Saved download $fileName ($mimeType, ${bytes.size} bytes)" }
         Handler(Looper.getMainLooper()).post {
-            Toast.makeText(context, "Downloaded $fileName", Toast.LENGTH_SHORT).show()
+            Toast.makeText(appContext, "Downloaded $fileName", Toast.LENGTH_SHORT).show()
         }
     }
 
@@ -803,7 +828,7 @@ class WebViewManager(
         headers: Map<String, String>? = null,
         disableCache: Boolean = false
     ) {
-        WebViewLog.d { "loadURL : $urlString disableCache=$disableCache" }
+        WebViewLog.d { "loadURL : ${WebViewLog.url(urlString)} disableCache=$disableCache" }
         applyCacheMode(disableCache)
         if (urlString.isNotEmpty()) {
             javaScriptChannelNames.forEach { addJavascriptChannel(it) }
@@ -914,22 +939,23 @@ class WebViewManager(
 
     private fun releaseWebViewReferences() {
         val wv = webView ?: return
+        // Cut every path back to the closed screen first: stopLoading() can fire a final
+        // onPageFinished / onReceivedError, which must not reach Dart for a disposed view.
+        delegate = null
         try {
+            wv.webChromeClient = null
+            wv.webViewClient = WebViewClient()
             wv.stopLoading()
             wv.setDownloadListener(null)
             (configuredJavaScriptChannels + "CustomBlobDownloader").forEach {
                 wv.removeJavascriptInterface(it)
             }
             configuredJavaScriptChannels.clear()
-            wv.webChromeClient = null
-            wv.webViewClient = WebViewClient()
             (wv.parent as? ViewGroup)?.removeView(wv)
             wv.removeAllViews()
         } catch (e: Exception) {
             WebViewLog.e("Releasing WebView references failed", e)
         }
-        // No more callbacks into the closed screen's channel.
-        delegate = null
     }
 
     fun resumeWebView() {

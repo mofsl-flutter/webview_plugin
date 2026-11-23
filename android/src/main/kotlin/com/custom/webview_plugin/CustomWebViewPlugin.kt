@@ -95,6 +95,10 @@ class CustomWebViewPlugin : FlutterPlugin, ActivityAware, MethodChannel.MethodCa
                 android.webkit.WebStorage.getInstance().deleteAllData()
                 result.success(null)
             }
+            "setVerboseLogging" -> {
+                WebViewLog.setVerbose(call.argument<Boolean>("enabled") ?: false)
+                result.success(null)
+            }
             "clearCookies" -> {
                 android.webkit.CookieManager.getInstance().removeAllCookies(null)
                 result.success(null)

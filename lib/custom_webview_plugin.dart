@@ -19,6 +19,25 @@ class CustomWebViewPlugin {
       rethrow;
     }
   }
+
+  /// Turns verbose native webview logs on or off at runtime, e.g. from Remote Config for a
+  /// QA or support build.
+  ///
+  /// Errors and warnings (page load, HTTP, SSL and download failures) are always logged.
+  /// Verbose logs (navigation, page console, JS channels, lifecycle) are on by default only in
+  /// debug builds. Outside debug builds URLs stay cut to scheme, host and path (no query
+  /// strings, which carry session tokens) and iOS does not log JS channel payloads, even with
+  /// verbose logging on.
+  static Future<void> setVerboseLogging(bool enabled) async {
+    try {
+      await _channel.invokeMethod<void>(
+        "setVerboseLogging",
+        <String, dynamic>{"enabled": enabled},
+      );
+    } on PlatformException catch (e) {
+      debugPrint("Failed to set verbose webview logging: ${e.message}");
+    }
+  }
 }
 
 /// A widget that displays a native web view.
